@@ -1,0 +1,12 @@
+# Never upload secrets or build output to Vercel
+server/config.json
+dist/
+node_modules/
+screenshots/
+.github/
+temp/
+*.zip
+*secret.txt
+download_config.ini
+.git/
+.vercel/
