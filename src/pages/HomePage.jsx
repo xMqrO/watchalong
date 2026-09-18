@@ -352,6 +352,7 @@ export default function HomePage({
                       onMarkUnwatched={onMarkUnwatched}
                       ageRating={rd.cert}
                       restricted={rd.restricted}
+                      isHomeCard
                     />
                   );
                 })}

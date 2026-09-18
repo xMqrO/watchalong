@@ -14,6 +14,7 @@
 // would be ambiguous with real slugs like "the-100".
 
 import { tmdbFetch } from "./api";
+import { isSpanish } from "./i18n";
 
 const decodeSeg = (s) => {
   try {
@@ -53,7 +54,13 @@ export function parseRoute(pathnameValue, searchValue) {
   const search = searchValue ?? window.location.search;
   const clean = (p) => p.replace(/\/+$/, "") || "/";
   const path = clean(pathname);
-  const parts = path === "/" ? [] : path.slice(1).split("/");
+  let parts = path === "/" ? [] : path.slice(1).split("/");
+  // /es (or /ES, /Es/) marks the Spanish UI. Strip the language segment and
+  // continue parsing the rest of the path exactly as an English URL.
+  const firstRaw = parts[0] || "";
+  if (firstRaw.toLowerCase() === "es") {
+    parts = parts.slice(1);
+  }
   const first = (parts[0] || "").toLowerCase();
   const params = new URLSearchParams(search);
   const notfound = { page: "notfound", data: null, needsResolve: false };
@@ -124,42 +131,48 @@ export function parseRoute(pathnameValue, searchValue) {
   };
 }
 
-// Build the canonical URL for a page + data.
+// Build the canonical URL for a page + data. Appends the /es language prefix
+// when the Spanish UI is active so internal navigation stays in Spanish.
 export function routeToPath(page, data = null) {
+  const LANG_PREFIX = isSpanish() ? "/es" : "";
   // TMDB TV results expose the title as `name`; movies use `title`. Accept
   // both so slugs are always derived from the real series/movie name.
   const titleOf = (d) => d?.title || d?.name || "";
   switch (page) {
     case "home":
-      return "/";
+      return `${LANG_PREFIX}/`;
     case "settings": {
       const section = data?.section;
       return section
-        ? `/settings?section=${encodeURIComponent(section)}`
-        : "/settings";
+        ? `${LANG_PREFIX}/settings?section=${encodeURIComponent(section)}`
+        : `${LANG_PREFIX}/settings`;
     }
     case "history":
-      return "/library";
+      return `${LANG_PREFIX}/library`;
     case "downloads":
-      return "/downloads";
+      return `${LANG_PREFIX}/downloads`;
     case "search": {
       const q = String(data?.query || "").trim();
-      return q ? `/search?q=${encodeURIComponent(q)}` : "/search";
+      return q
+        ? `${LANG_PREFIX}/search?q=${encodeURIComponent(q)}`
+        : `${LANG_PREFIX}/search`;
     }
     case "movie": {
       const slug = slugify(titleOf(data));
       const id = data?.id;
-      return id != null ? `/watch/${slug}-${id}` : `/watch/${slug}`;
+      return id != null
+        ? `${LANG_PREFIX}/watch/${slug}-${id}`
+        : `${LANG_PREFIX}/watch/${slug}`;
     }
     case "tv": {
       const slug = slugify(titleOf(data));
-      let path = `/${slug}`;
+      let path = `${LANG_PREFIX}/${slug}`;
       if (data?.season != null) path += `/s${Number(data.season)}`;
       if (data?.episode != null) path += `/ep${Number(data.episode)}`;
       return path;
     }
     default:
-      return "/";
+      return `${LANG_PREFIX}/`;
   }
 }
 

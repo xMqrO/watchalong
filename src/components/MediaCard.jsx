@@ -18,6 +18,7 @@ const MediaCard = memo(function MediaCard({
   onMarkUnwatched,
   ageRating,
   restricted,
+  isHomeCard,
 }) {
   const title = item.title || item.name;
   const year = (item.release_date || item.first_air_date || "").slice(0, 4);
@@ -38,6 +39,9 @@ const MediaCard = memo(function MediaCard({
     : `movie_${item.id}`;
 
   const isWatched = !!watched?.[watchedKey];
+
+  // For compact home grid, reduce padding and font sizes
+  const isCompact = isHomeCard;
 
   // Context menu state
   const [menu, setMenu] = useState(null); // { x, y }

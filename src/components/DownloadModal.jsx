@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { CloseIcon, DownloadIcon, SettingsIcon, ExternalLinkIcon } from "./Icons";
+import { isElectron } from "../utils/storage";
 
 /**
- * Web build: the browser cannot intercept m3u8/subtitle streams or hand files
- * to a native downloader, so this modal offers the resolved stream URL with
- * "open in new tab" / "copy link" actions plus a yt-dlp tip for those who want
- * a local file. Props mirror the Electron-era interface so callers stay compatible.
+ * Web build: the browser cannot intercept m3u8/subtitle streams the way the
+ * desktop app can, but the site's /api/stream endpoint bridges the gap:
+ * direct files are piped through as a real download, and HLS links produce a
+ * self-contained .m3u8 playlist any player (VLC/ffmpeg) can open.
  */
 export default function DownloadModal({
   onClose,
@@ -24,6 +25,17 @@ export default function DownloadModal({
 }) {
   const [copied, setCopied] = useState(false);
   const url = streamUrl || m3u8Url || null;
+
+  const downloadUrl = useMemo(() => {
+    if (!url) return null;
+    let base = "";
+    try {
+      base = decodeURIComponent(new URL(url).pathname.split("/").pop() || "");
+    } catch {}
+    base = base.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim().slice(0, 180) || "download";
+    if (!/\.m3u8$/i.test(base)) base += ".m3u8";
+    return `/api/stream?url=${encodeURIComponent(url)}&name=${encodeURIComponent(base)}`;
+  }, [url]);
 
   const copyUrl = async () => {
     if (!url) return;
@@ -120,6 +132,22 @@ export default function DownloadModal({
                 {url}
               </div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {!isElectron && url && downloadUrl && (
+                  <button
+                    className="btn btn-primary"
+                    style={{
+                      fontSize: 13,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                    onClick={() => {
+                      window.location.href = downloadUrl;
+                    }}
+                  >
+                    <DownloadIcon size={14} /> Download file
+                  </button>
+                )}
                 <button className="btn btn-primary" onClick={copyUrl} style={{ fontSize: 13 }}>
                   {copied ? "✓ Copied" : "Copy link"}
                 </button>
@@ -167,11 +195,23 @@ export default function DownloadModal({
             }}
           >
             <strong style={{ color: "var(--text2)" }}>Want a local file?</strong>{" "}
-            Browsers cannot save these streams directly. Use a tool like
-            <code style={{ margin: "0 4px" }}>yt-dlp</code> or
-            <code style={{ margin: "0 4px" }}>ffmpeg</code> with the link above,
-            One-click downloads and subtitle downloads are only available in
-            the desktop app.
+            {!isElectron ? (
+              <>
+                Use <strong>Download file</strong> above — the site's server saves
+                direct files straight away. HLS links download as a
+                <code style={{ margin: "0 4px" }}>.m3u8</code> playlist: open it
+                with VLC (Media → Open Network Stream) or convert with
+                <code style={{ margin: "0 4px" }}>ffmpeg</code>.
+              </>
+            ) : (
+              <>
+                Browsers cannot save these streams directly. Use a tool like
+                <code style={{ margin: "0 4px" }}>yt-dlp</code> or
+                <code style={{ margin: "0 4px" }}>ffmpeg</code> with the link above,
+                One-click downloads and subtitle downloads are only available in
+                the desktop app.
+              </>
+            )}
           </div>
         </div>
       </div>

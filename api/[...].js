@@ -1,6 +1,7 @@
 // Vercel catch-all serverless function for /api/*.
-// Reuses the existing Node-style router from server/api.js so the deployed
-// API behaves exactly like the local server (TMDB proxy + AllManga resolver).
+// Zero-config mount (api/[...].js) preserves the original URL, so
+// handleApiRequest sees exact paths like "/api/tmdb/search/multi?query=x".
+// Reuses the existing Node-style router from server/api.js.
 // Secrets come from Vercel env vars: TMDB_TOKEN (required), ALLANIME_AES_KEY (optional).
 
 import { handleApiRequest } from "../server/api.js";

@@ -2,8 +2,15 @@ const IMG_BASE = "https://image.tmdb.org/t/p";
 
 // ── TMDB metadata language ────────────────────────────────────────────────────
 // Read lazily from localStorage so it always reflects the current setting.
-// Falls back to "en-US".
-function getTmdbLanguage() {
+// Falls back to "en-US". While the Spanish UI (/es) is active the *content*
+// itself is fetched in Spanish too, so titles, overviews, genres, and episode
+// names all come back translated from TMDB.
+import { isSpanish } from "./i18n";
+
+const ES_TMDB_LANG = "es-ES";
+
+export function getEffectiveTmdbLanguage() {
+  if (isSpanish()) return ES_TMDB_LANG;
   try {
     const raw = localStorage.getItem("watchalong_tmdbLang");
     return raw ? JSON.parse(raw) : "en-US";
@@ -14,7 +21,7 @@ function getTmdbLanguage() {
 
 // Append the language query param to a TMDB path.
 function withLanguage(path) {
-  const lang = getTmdbLanguage();
+  const lang = getEffectiveTmdbLanguage();
   const sep = path.includes("?") ? "&" : "?";
   return `${path}${sep}language=${lang}`;
 }
@@ -118,6 +125,9 @@ export const tmdbFetch = async (path, apiKey) => {
 // https://www.videasy.to/docs
 // https://vsembed.su/api/
 // https://www.vidking.net/#documentation
+// https://vixsrc.to/ (movie: /movie/{id}, tv: /tv/{id}/{season}/{episode})
+// https://vidfast.vc/ (movie: /movie/{id}?autoPlay=true, tv: /tv/{id}/{s}/{e}?autoPlay=true)
+// https://vidlink.pro/ (movie: /movie/{tmdbId}, tv: /tv/{tmdbId}/{season}/{episode})
 
 // ── Player Sources ────────────────────────────────────────────────────────────
 // supportsProgress: true = executeJavaScript tracking works for this source
@@ -165,6 +175,49 @@ export const PLAYER_SOURCES = [
     movieUrl: (id) => `https://www.vidking.net/embed/movie/${id}`,
     tvUrl: (id, season, ep) =>
       `https://www.vidking.net/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "vixsrc",
+    label: "VixSrc",
+    tag: null,
+    note: null,
+    supportsProgress: true,
+    progressViaFrames: true, // video lives in a nested iframe, needs main-process frame query
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://vixsrc.to/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://vixsrc.to/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "vidfast",
+    label: "VidFast",
+    tag: null,
+    note: null,
+    supportsProgress: true,
+    colorParam: null,
+    langParam: null,
+    params: {
+      autoPlay: "true",
+    },
+    movieUrl: (id) => `https://vidfast.vc/movie/${id}?autoPlay=true`,
+    tvUrl: (id, season, ep) =>
+      `https://vidfast.vc/tv/${id}/${season}/${ep}?autoPlay=true`,
+  },
+  {
+    id: "vidlink",
+    label: "VidLink",
+    tag: null,
+    note: null,
+    supportsProgress: true,
+    progressViaFrames: true, // video lives in a nested iframe, needs main-process frame query
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://vidlink.pro/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://vidlink.pro/tv/${id}/${season}/${ep}`,
   },
   {
     id: "allmanga",

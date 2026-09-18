@@ -43,13 +43,9 @@ import {
   RatingShieldIcon,
   RatingLockIcon,
   SourceIcon,
-  ShieldBlockIcon,
-  PopOutIcon,
 } from "../components/Icons";
 import DownloadModal from "../components/DownloadModal";
 import TrailerModal from "../components/TrailerModal";
-import BlockedStatsModal from "../components/BlockedStatsModal";
-import { useBlockedStats } from "../utils/useBlockedStats";
 import {
   storage,
   STORAGE_KEYS,
@@ -435,9 +431,6 @@ export default function TVPage({
   // Webview loading overlay
   const [webviewLoading, setWebviewLoading] = useState(false);
   const [playerFullscreen, setPlayerFullscreen] = useState(false);
-  const [pipOpen, setPipOpen] = useState(false);
-  const pipUrlRef = useRef(null);
-  const pipWebContentsIdRef = useRef(null); // cached WebContents ID of the pop-out window
   const [menuPos, setMenuPos] = useState(null);
   // AniSkip
   const [skipTimings, setSkipTimings] = useState(null); // { intro?, outro? }
@@ -450,7 +443,12 @@ export default function TVPage({
   const webviewRef = useRef(null);
   // Browser-build progress tracking (Electron uses webview.executeJavaScript)
   const browserReaderRef = useRef(null); // OnVid postMessage channel
-  const browserElapsedStartRef = useRef(0); // wall-clock fallback baseline
+  // Wall-clock fallback is anchored to the last trusted position (resume
+  // point or the latest OnVid snapshot) so progress never resets to ~0 when
+  // a source doesn't answer the OnVid API. It also powers auto-watched and
+  // autoplay for sources without one.
+  const fallbackBaseSecRef = useRef(0); // last trusted position (seconds)
+  const fallbackBaseAtRef = useRef(0); // epoch when fallbackBaseSec was set
   const browserResumeSeekedRef = useRef(false); // only seek to resume once per episode
   // Always-current refs for interval callbacks, avoids stale closures without restarting the interval
   const saveProgressRef = useRef(saveProgress);
@@ -470,16 +468,6 @@ export default function TVPage({
     () => storage.get("downloaderFolder") || "",
   );
   const [epMenu, setEpMenu] = useState(null); // { x, y, pk }
-
-  // Blocked request stats, reset key includes season+episode so counter resets on each ep
-  const blockedResetKey = `${item.id}_s${selectedSeason}_e${selectedEp?.episode_number ?? 0}`;
-  const {
-    sessionTotal: blockedSession,
-    alltimeTotal: blockedAlltime,
-    showModal: showBlockedModal,
-    setShowModal: setShowBlockedModal,
-    getSessionDomains: getBlockedDomains,
-  } = useBlockedStats(blockedResetKey);
 
   // Age rating
   const [rating, setRating] = useState({ cert: null, minAge: null });
@@ -1220,12 +1208,17 @@ export default function TVPage({
   // OnVid's message API (see browserPlayer.js). On attach, seek back to the
   // last saved position so the episode resumes where the user left off.
   useEffect(() => {
-    if (isElectron || !playing || !currentProgressKey) return;
+    if (isElectron && window.electron?.queryVideoProgress) return;
     const iframe = webviewRef.current;
     const reader = createOnVidReader(iframe);
     browserReaderRef.current = reader;
-    browserElapsedStartRef.current = Date.now();
     browserResumeSeekedRef.current = false;
+    // Anchor the wall-clock fallback to the saved position so resuming an
+    // episode never restarts progress from 0 (fixes non-OnVid sources).
+    fallbackBaseSecRef.current = Number(
+      storage.get("dlTime_" + currentProgressKey) || 0,
+    );
+    fallbackBaseAtRef.current = Date.now();
 
     let resumeTimer = null;
     if (reader) {
@@ -1345,15 +1338,19 @@ export default function TVPage({
           // ── Browser build: track progress via OnVid postMessage channel ──
           // Electron reads the player through the webview; on the website the
           // iframe is cross-origin, so we use OnVid's message API. When the
-          // source doesn't answer, fall back to wall-clock elapsed time so
-          // "Continue watching" still reflects the latest session position.
-          if (!isElectron) {
+          // source doesn't answer, fall back to a wall-clock estimate anchored
+          // to the last trusted position so progress, auto-watched, and
+          // autoplay all still work for EVERY source.
+          if (!isElectron || !window.electron?.queryVideoProgress) {
             const reader = browserReaderRef.current;
             const exact = reader?.read() || null;
             if (exact && exact.duration > 0 && exact.currentTime != null) {
               durationRef.current = exact.duration;
               const ct = exact.currentTime;
               lastKnownTimeRef.current = ct;
+              // Re-anchor the wall-clock estimate to the real read
+              fallbackBaseSecRef.current = ct;
+              fallbackBaseAtRef.current = Date.now();
               const p = Math.floor((ct / exact.duration) * 100);
               saveProgressRef.current(currentProgressKey, Math.min(p, 100));
               storage.set(
@@ -1379,25 +1376,47 @@ export default function TVPage({
                 triggerAutoplayRef.current?.();
               }
             } else if (!exact) {
-              if (!browserElapsedStartRef.current)
-                browserElapsedStartRef.current = Date.now();
-              const elapsed = Math.max(
-                0,
-                (Date.now() - browserElapsedStartRef.current) / 1000,
-              );
+              // Fallback: estimate position = last trusted position + wall
+              // time since it was observed. Never starts from 0 on resume.
+              if (!fallbackBaseAtRef.current) {
+                fallbackBaseSecRef.current = 0;
+                fallbackBaseAtRef.current = Date.now();
+              }
+              const estimated =
+                fallbackBaseSecRef.current +
+                Math.max(0, (Date.now() - fallbackBaseAtRef.current) / 1000);
               const minutes = Number(d?.episode_run_time?.[0]) || 0;
               const durationSec = minutes > 0 ? minutes * 60 : 0;
-              lastKnownTimeRef.current = elapsed;
+              lastKnownTimeRef.current = estimated;
               if (durationSec > 0) {
-                const p = Math.floor((elapsed / durationSec) * 100);
+                durationRef.current = durationSec;
+                const p = Math.floor((estimated / durationSec) * 100);
                 saveProgressRef.current(
                   currentProgressKey,
-                  Math.min(p, 100),
+                  Math.min(100, p),
                 );
+                const remaining = durationSec - estimated;
+                if (
+                  !autoMarkedRef.current &&
+                  remaining >= 0 &&
+                  remaining <= watchedThreshold
+                ) {
+                  autoMarkedRef.current = true;
+                  onMarkWatchedRef.current?.(currentProgressKey);
+                }
+                if (
+                  remaining >= 0 &&
+                  remaining <= watchedThreshold &&
+                  !localCountdownStartedRef.current
+                ) {
+                  localCountdownStartedRef.current = true;
+                  setCountdownStartedRef.current?.(true);
+                  triggerAutoplayRef.current?.();
+                }
               }
               storage.set(
                 "dlTime_" + currentProgressKey,
-                Math.floor(elapsed),
+                Math.floor(estimated),
               );
             }
             reader?.poll();
@@ -1408,16 +1427,7 @@ export default function TVPage({
           if (!wv) return;
 
           let result;
-          // When the pop-out window is open the main webview shows about:blank
-          // -> query the pip window's webContents directly.
-          if (
-            pipWebContentsIdRef.current != null &&
-            window.electron?.queryVideoProgress
-          ) {
-            result = await window.electron.queryVideoProgress(
-              pipWebContentsIdRef.current,
-            );
-          } else if (progressViaFrames && window.electron?.queryVideoProgress) {
+          if (progressViaFrames && window.electron?.queryVideoProgress) {
             result = await window.electron.queryVideoProgress(
               wv.getWebContentsId(),
             );
@@ -1509,6 +1519,8 @@ export default function TVPage({
             // If user seeked, update ref to their chosen position immediately
             if (result.recentUserSeek && result.lastUserSeekTo !== null) {
               lastKnownTimeRef.current = result.lastUserSeekTo;
+              fallbackBaseSecRef.current = result.lastUserSeekTo;
+              fallbackBaseAtRef.current = Date.now();
             } else {
               lastKnownTimeRef.current = ct;
             }
@@ -1546,6 +1558,21 @@ export default function TVPage({
       clearTimeout(timer);
       clearInterval(interval);
       setSkipPrompt(null);
+      // Flush the last known position immediately on teardown (source
+      // switch, episode change, pause/stop, navigation) — the interval
+      // dies with the effect, so this is the final save for this session.
+      const key = currentProgressKey;
+      const last = lastKnownTimeRef.current;
+      if (last > 0) {
+        const total = durationRef.current;
+        if (total > 0) {
+          saveProgressRef.current(
+            key,
+            Math.min(100, Math.floor((last / total) * 100)),
+          );
+        }
+        storage.set("dlTime_" + key, Math.floor(last));
+      }
     };
   }, [
     playing,
@@ -1744,23 +1771,17 @@ export default function TVPage({
     };
   }, [playing, playerSource]);
 
-  // ── PiP pop-out: navigate main webview away so only one stream is active ──
+  // ── CSS overlay fullscreen (web embeds) ────────────────────────────────────
+  // Kept as an overlay fallback on desktop: Chromium attaches a native Space
+  // toggle (fired on keyup) to a media element that IS the fullscreen element;
+  // that double-toggles OnVid's own keydown handler ("pauses while Space is
+  // held"). The onWebviewEnterFullscreen listener above routes to this overlay
+  // instead of native fullscreen. No user-facing button for it.
   useEffect(() => {
-    if (!playing) return;
-    const openH = window.electron?.onPipOpened?.(async () => {
-      setPipOpen(true);
-      pipWebContentsIdRef.current =
-        (await window.electron.getPipWebContentsId?.()) ?? null;
-    });
-    const closeH = window.electron?.onPipClosed?.(() => {
-      pipUrlRef.current = null;
-      pipWebContentsIdRef.current = null;
-      setPipOpen(false);
-    });
-    return () => {
-      if (openH) window.electron?.offPipOpened?.(openH);
-      if (closeH) window.electron?.offPipClosed?.(closeH);
-    };
+    if (!playing) {
+      setPlayerFullscreen(false);
+      document.documentElement.removeAttribute("data-player-fullscreen");
+    }
   }, [playing]);
 
   const effectiveYear =
@@ -1778,21 +1799,18 @@ export default function TVPage({
 
   // ── Redirect & Popup Shield ───────────────────────────────────────────────
   const shield = useRedirectShield();
-  const realPlayerSrc =
-    pipOpen
-      ? "about:blank"
-      : isAsync
-        ? resolvedPlayerUrl || "about:blank"
-        : getSourceUrl(
-            playerSource,
-            "tv",
-            item.id,
-            playerEp.season,
-            playerEp.episode,
-            {},
-            playerAccentColor,
-            playerSubLang,
-          );
+  const realPlayerSrc = isAsync
+    ? resolvedPlayerUrl || "about:blank"
+    : getSourceUrl(
+        playerSource,
+        "tv",
+        item.id,
+        playerEp.season,
+        playerEp.episode,
+        {},
+        playerAccentColor,
+        playerSubLang,
+      );
   useEffect(() => {
     if (shield.blocked) return;
     shield.reset();
@@ -1906,6 +1924,15 @@ export default function TVPage({
                     {isSaved ? <BookmarkFillIcon /> : <BookmarkIcon />}
                     {isSaved ? "Saved" : "Save"}
                   </button>
+                  {!isElectron && (
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => setShowDownload(true)}
+                      title="Download this episode"
+                    >
+                      <DownloadIcon /> Download
+                    </button>
+                  )}
                   <button className="btn btn-ghost" onClick={onBack}>
                     <BackIcon /> Back
                   </button>
@@ -2049,51 +2076,6 @@ export default function TVPage({
                       style={{ marginTop: 4 }}
                     >
                       Resume player
-                    </button>
-                  </div>
-                )}
-                {/* Pop-out active: main stream paused, pop-out has real player */}
-                {pipOpen && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      inset: 0,
-                      zIndex: 20,
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      background: "rgba(0,0,0,0.92)",
-                      gap: 16,
-                      borderRadius: "inherit",
-                    }}
-                  >
-                    <PopOutIcon size={36} />
-                    <span
-                      style={{
-                        fontSize: 15,
-                        color: "var(--text1)",
-                        fontWeight: 600,
-                      }}
-                    >
-                      Playing in pop-out window
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 12,
-                        color: "var(--text2)",
-                        textAlign: "center",
-                        maxWidth: 260,
-                      }}
-                    >
-                      Closing the pop-out will reload the player here.
-                    </span>
-                    <button
-                      className="player-overlay-btn"
-                      onClick={() => window.electron?.closePipWindow?.()}
-                      style={{ marginTop: 4 }}
-                    >
-                      Close pop-out &amp; return
                     </button>
                   </div>
                 )}
@@ -2273,6 +2255,7 @@ export default function TVPage({
                   title={`${title} player`}
                   allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
                   allowFullScreen
+                  referrerPolicy="no-referrer"
                   onLoad={() => {
                     setWebviewLoading(false);
                     shield.onPlayerLoad();
@@ -2332,58 +2315,6 @@ export default function TVPage({
                       {dubMode === "sub" ? "SUB" : "DUB"}
                     </button>
                   )}
-                  {/* Blocked ads & trackers button */}
-                  <button
-                    className="player-overlay-btn"
-                    onClick={() => {
-                      setShowSourceMenu(false);
-                      setShowBlockedModal(true);
-                    }}
-                    title="Blocked ads & trackers"
-                  >
-                    <ShieldBlockIcon />
-                    {blockedSession > 0 && (
-                      <span className="player-blocked-badge">
-                        {blockedSession}
-                      </span>
-                    )}
-                  </button>
-                  {/* Pop-out button */}
-                  <button
-                    className="player-overlay-btn"
-                    onClick={() => {
-                      if (pipOpen) {
-                        window.electron?.closePipWindow?.();
-                        return;
-                      }
-                      const url = isAsync
-                        ? resolvedPlayerUrl
-                        : getSourceUrl(
-                            playerSource,
-                            "tv",
-                            item.id,
-                            playerEp.season,
-                            playerEp.episode,
-                            {},
-                            playerAccentColor,
-                            playerSubLang,
-                          );
-                      if (!url) return;
-                      pipUrlRef.current = url;
-                      window.electron?.openPipWindow?.(
-                        url,
-                        item.name ?? item.title,
-                      );
-                    }}
-                    title={pipOpen ? "Close pop-out" : "Pop out player"}
-                    disabled={
-                      !pipOpen &&
-                      (webviewLoading || !!(isAsync && !resolvedPlayerUrl))
-                    }
-                    style={pipOpen ? { color: "var(--red)" } : undefined}
-                  >
-                    <PopOutIcon />
-                  </button>
                 </div>
                 {showSourceMenu && menuPos && (
                   <div
@@ -2747,15 +2678,6 @@ export default function TVPage({
           onMarkWatched={() => markSeasonWatched(seasonMenu.seasonNum)}
           onMarkUnwatched={() => markSeasonUnwatched(seasonMenu.seasonNum)}
           onClose={() => setSeasonMenu(null)}
-        />
-      )}
-
-      {showBlockedModal && (
-        <BlockedStatsModal
-          sessionDomains={getBlockedDomains()}
-          sessionTotal={blockedSession}
-          alltimeTotal={blockedAlltime}
-          onClose={() => setShowBlockedModal(false)}
         />
       )}
 

@@ -30,6 +30,16 @@ import {
 } from "../utils/homeLayout";
 import { collectBackupData, restoreBackupData } from "../utils/backup";
 import { formatBytes } from "../utils/storage";
+import {
+  loadShieldsSettings,
+  saveShieldsSettings,
+  getShieldsStats,
+  getEngineStatus,
+  refreshFilterLists,
+  FINGERPRINT_PROTECTIONS,
+  SW,
+} from "../utils/shields";
+import { BRAVE_LISTS } from "../utils/shieldsEngine";
 
 // ── Custom Select ─────────────────────────────────────────────────────────────
 function SettingsSelect({ value, onChange, options, style }) {
@@ -2270,6 +2280,405 @@ function DiscordRpcSection() {
   );
 }
 
+// ── Shields (Brave-style) Section ─────────────────────────────────────────────
+function ShieldsSection() {
+  const [settings, setSettings] = useState(() => loadShieldsSettings());
+  const [stats, setStats] = useState(() => getShieldsStats());
+  const [engine, setEngine] = useState(() => getEngineStatus());
+  const [showAdvanced, setShowAdvanced] = useState(true);
+  const [showLists, setShowLists] = useState(false);
+  const [showFpInfo, setShowFpInfo] = useState(false);
+  const [listBusy, setListBusy] = useState(false);
+  const [listStatus, setListStatus] = useState(null);
+
+  useEffect(() => {
+    const update = () => {
+      setSettings(loadShieldsSettings());
+      setStats(getShieldsStats());
+      setEngine(getEngineStatus());
+    };
+    window.addEventListener(SW.statsChanged, update);
+    window.addEventListener(SW.shieldsChanged, update);
+    return () => {
+      window.removeEventListener(SW.statsChanged, update);
+      window.removeEventListener(SW.shieldsChanged, update);
+    };
+  }, []);
+
+  const patch = (p) => {
+    const next = saveShieldsSettings(p);
+    setSettings(next);
+  };
+  const toggle = (key) => patch({ [key]: !settings[key] });
+  const toggleList = (id) =>
+    patch({ lists: { ...settings.lists, [id]: !settings.lists[id] } });
+
+  const updateLists = async () => {
+    if (listBusy || engine.building) return;
+    setListBusy(true);
+    setListStatus(null);
+    try {
+      await refreshFilterLists();
+      setListStatus("✓ Filter lists updated");
+    } catch {
+      setListStatus("✕ Could not update filter lists");
+    } finally {
+      setListBusy(false);
+      setEngine(getEngineStatus());
+    }
+  };
+
+  const listCount = BRAVE_LISTS.filter((l) => settings.lists?.[l.id]).length;
+  const engineLabel = engine.building
+    ? "updating…"
+    : engine.ready
+      ? "engine ready"
+      : "engine loading";
+
+  return (
+    <div style={{ marginBottom: 40 }}>
+      <div className="settings-section-title">Shields</div>
+
+      {/* Aggregate block count (Brave-style hero number) */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 16,
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderRadius: 10,
+          padding: "18px 20px",
+          marginBottom: 14,
+        }}
+      >
+        <div
+          style={{
+            fontSize: 34,
+            fontWeight: 800,
+            color: "var(--red)",
+            fontVariantNumeric: "tabular-nums",
+            minWidth: 52,
+            textAlign: "center",
+          }}
+        >
+          {stats.total ?? 0}
+        </div>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)" }}>
+            trackers, ads, and more blocked
+          </div>
+          <div
+            style={{
+              fontSize: 12.5,
+              color: "var(--text3)",
+              marginTop: 3,
+              lineHeight: 1.5,
+            }}
+          >
+            Brave Shields on this site. Brave&apos;s official filter lists
+            (EasyList, EasyPrivacy, uBlock Origin and Brave&apos;s own) run
+            through the adblock engine — all on by default.
+          </div>
+        </div>
+      </div>
+
+      <div
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderRadius: 10,
+          padding: "0 16px",
+          marginBottom: 20,
+        }}
+      >
+        <ToggleRow
+          label="Shields"
+          description="Blocks tracking requests, ads, and other unwanted content; hides annoying page elements. Turn off only if something breaks."
+          value={settings.enabled}
+          onChange={(v) => toggle("enabled")}
+        />
+      </div>
+
+      {/* Advanced options (Brave-style disclosure) */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          cursor: "pointer",
+          userSelect: "none",
+          padding: "8px 2px 6px",
+          fontSize: 14,
+          fontWeight: 600,
+          color: "var(--text2)",
+        }}
+        onClick={() => setShowAdvanced((v) => !v)}
+      >
+        <span
+          style={{
+            display: "inline-block",
+            transform: showAdvanced ? "rotate(90deg)" : "rotate(0deg)",
+            transition: "transform 0.15s",
+            fontSize: 11,
+          }}
+        >
+          ▶
+        </span>
+        Advanced options
+      </div>
+      {showAdvanced && (
+        <div
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: 10,
+            padding: "0 16px",
+            marginBottom: 20,
+          }}
+        >
+          <ToggleRow
+            label="Aggressively block trackers & ads"
+            description="Standard (off): blocks third-party ads and trackers. Aggressive (on): also blocks some first-party requests, which can break pages more often."
+            value={settings.aggressive}
+            onChange={(v) => toggle("aggressive")}
+          />
+          <ToggleRow
+            label="Upgrade connections to HTTPS"
+            description={`Forces http:// links to their secure https:// version when available. ${stats.httpsUpgrades || 0} upgraded so far.`}
+            value={settings.httpsUpgrade}
+            onChange={(v) => toggle("httpsUpgrade")}
+          />
+          <ToggleRow
+            label="Block scripts"
+            description="Disables scripts loaded from third-party hosts on this page. Keep off unless a page misbehaves."
+            value={settings.blockScripts}
+            onChange={(v) => toggle("blockScripts")}
+          />
+          <ToggleRow
+            label="Block fingerprinting"
+            description="Randomizes browser characteristics commonly used to fingerprint this device, so each visit looks slightly different."
+            value={settings.blockFingerprinting}
+            onChange={(v) => toggle("blockFingerprinting")}
+          />
+          {settings.blockFingerprinting && (
+            <div
+              style={{
+                background: "var(--surface2)",
+                borderRadius: 8,
+                margin: "4px 0 14px",
+                padding: "6px 14px",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "var(--text3)",
+                  lineHeight: 1.6,
+                  margin: "8px 0 6px",
+                }}
+              >
+                Applied protections do not necessarily indicate that this web
+                page is attempting to fingerprint your browser.{" "}
+                <span
+                  style={{
+                    color: "var(--red)",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                  }}
+                  onClick={() => setShowFpInfo((v) => !v)}
+                >
+                  Learn more
+                </span>
+              </div>
+              {showFpInfo && (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--text2)",
+                    lineHeight: 1.6,
+                    marginBottom: 8,
+                  }}
+                >
+                  Fingerprinting builds a profile from stable device traits.
+                  Shields farb the high-entropy ones (screen size, language,
+                  hardware concurrency, user agent) per page load, so this page
+                  sees a slightly different device each visit while staying
+                  fully usable. &quot;Font&quot; cannot be measured from script
+                  without explicit permission but is listed as a protection.
+                </div>
+              )}
+              {FINGERPRINT_PROTECTIONS.map((p) => (
+                <div
+                  key={p.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "8px 0",
+                    borderTop: "1px solid var(--border)",
+                  }}
+                >
+                  <div style={{ fontSize: 13.5, color: "var(--text)" }}>
+                    {p.label}
+                  </div>
+                  <Toggle value={settings[p.id]} onChange={() => toggle(p.id)} />
+                </div>
+              ))}
+            </div>
+          )}
+          <ToggleRow
+            label="Block third-party cookies"
+            description="Refuses cookies on cross-site requests made from this page."
+            value={settings.blockThirdPartyCookies}
+            onChange={(v) => toggle("blockThirdPartyCookies")}
+          />
+          <ToggleRow
+            label="Forget me when I close this site"
+            description="Clears this page's saved data (watchlist, history, progress, settings) when you close it. Off by default."
+            value={settings.forgetMe}
+            onChange={(v) => toggle("forgetMe")}
+          />
+        </div>
+      )}
+
+      {/* Filter lists */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          cursor: "pointer",
+          userSelect: "none",
+          padding: "8px 2px 6px",
+          fontSize: 14,
+          fontWeight: 600,
+          color: "var(--text2)",
+        }}
+        onClick={() => setShowLists((v) => !v)}
+      >
+        <span
+          style={{
+            display: "inline-block",
+            transform: showLists ? "rotate(90deg)" : "rotate(0deg)",
+            transition: "transform 0.15s",
+            fontSize: 11,
+          }}
+        >
+          ▶
+        </span>
+        <span>Filter lists</span>
+        <span
+          style={{
+            fontSize: 12,
+            fontWeight: 500,
+            color: "var(--text3)",
+            marginLeft: "auto",
+          }}
+        >
+          {listCount}/{BRAVE_LISTS.length} active · {engineLabel}
+        </span>
+        <button
+          className="btn btn-ghost"
+          style={{
+            padding: "4px 12px",
+            fontSize: 12,
+            opacity: listBusy || engine.building ? 0.55 : 1,
+          }}
+          disabled={listBusy || engine.building}
+          onClick={(e) => {
+            e.stopPropagation();
+            updateLists();
+          }}
+        >
+          {listBusy ? "Updating…" : "Update lists"}
+        </button>
+      </div>
+      {showLists && (
+        <div
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: 10,
+            padding: "0 16px",
+            marginBottom: 20,
+          }}
+        >
+          {BRAVE_LISTS.map((l) => (
+            <div
+              key={l.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "10px 0",
+                borderBottom: "1px solid var(--border)",
+              }}
+            >
+              <span style={{ flex: 1, fontSize: 13.5, color: "var(--text)" }}>
+                {l.title}
+              </span>
+              <Toggle
+                value={!!settings.lists?.[l.id]}
+                onChange={() => toggleList(l.id)}
+              />
+            </div>
+          ))}
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--text3)",
+              lineHeight: 1.6,
+              padding: "10px 0 12px",
+            }}
+          >
+            Lists come from EasyList, EasyPrivacy, uBlock Origin and
+            Brave&apos;s own repos — the same default sets the Brave browser
+            ships. They are downloaded in your browser on first activation and
+            cached locally.
+            {listStatus ? (
+              <span
+                style={{
+                  color: listStatus.startsWith("✓") ? "#48c774" : "var(--red)",
+                  marginLeft: 8,
+                }}
+              >
+                {listStatus}
+              </span>
+            ) : null}
+          </div>
+        </div>
+      )}
+
+      {/* Global settings */}
+      <div
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderRadius: 10,
+          padding: "14px 16px",
+        }}
+      >
+        <div
+          style={{
+            fontSize: 13.5,
+            fontWeight: 600,
+            color: "var(--text)",
+            marginBottom: 4,
+          }}
+        >
+          Global Settings
+        </div>
+        <div style={{ fontSize: 12.5, color: "var(--text3)", lineHeight: 1.6 }}>
+          These protections are the defaults for every WatchAlong page on this
+          origin. Per-page toggles can override them, and blocked requests are
+          counted per site in the Shields summary above.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Section Group Header ─────────────────────────────────────────────────────
 function SectionGroupHeader({ title, subtitle }) {
   return (
@@ -2471,6 +2880,37 @@ const SECTION_NAV = [
       "scheduled",
       "json",
       "backup file",
+      "privacy",
+      "shield",
+      "adblock",
+      "tracker",
+      "fingerprint",
+    ],
+  },
+  {
+    id: "shields",
+    label: "Shields",
+    icon: "🛡",
+    keywords: [
+      "shield",
+      "shields",
+      "adblock",
+      "ad block",
+      "tracker",
+      "tracking",
+      "ads",
+      "fingerprint",
+      "fingerprinting",
+      "privacy",
+      "protection",
+      "cookies",
+      "https",
+      "scripts",
+      "filter lists",
+      "easylist",
+      "ublock",
+      "brave",
+      "forget",
     ],
   },
   {
@@ -3141,6 +3581,7 @@ export default function SettingsPage({
   const secInterface = useRef(null);
   const secLibrary = useRef(null);
   const secBackup = useRef(null);
+  const secShields = useRef(null);
   const secStorage = useRef(null);
 
   const sectionRefs = {
@@ -3154,6 +3595,7 @@ export default function SettingsPage({
     interface: secInterface,
     library: secLibrary,
     backup: secBackup,
+    shields: secShields,
     storage: secStorage,
   };
 
@@ -3817,6 +4259,17 @@ export default function SettingsPage({
             <BackupRestoreSection />
           </div>
         )}
+
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        {/* GROUP: SHIELDS                                                     */}
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        <div ref={secShields} style={{ scrollMarginTop: 80 }}>
+          <SectionGroupHeader
+            title="Shields"
+            subtitle="Block ads, trackers and fingerprinting — Brave Shields on the web"
+          />
+          <ShieldsSection />
+        </div>
 
         {/* ══════════════════════════════════════════════════════════════════ */}
         {/* GROUP: STORAGE & DATA                                              */}

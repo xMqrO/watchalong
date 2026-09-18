@@ -1,0 +1,48 @@
+{
+  "name": "watchalong-desktop",
+  "version": "1.0.0",
+  "description": "WatchAlong desktop app",
+  "license": "GPL-3.0",
+  "private": true,
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable",
+    "pack": "electron-builder --win nsis"
+  },
+  "build": {
+    "appId": "com.watchalong.desktop",
+    "productName": "WatchAlong",
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../dist",
+        "to": "dist"
+      },
+      {
+        "from": "../server",
+        "to": "server"
+      }
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "artifactName": "WatchAlong-${version}-portable.${ext}"
+    },
+    "portable": {
+      "requestExecutionLevel": "user"
+    },
+    "directories": {
+      "output": "release"
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  }
+}

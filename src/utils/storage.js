@@ -100,6 +100,9 @@ export const STORAGE_KEYS = {
   GAMEPAD_ENABLED: "gamepadEnabled",
   // Block player redirects & popups (web build)
   REDIRECT_SHIELD: "redirectShield",
+  // Brave-style Shields (per-origin protection settings + aggregate stats)
+  SHIELDS: "shields",
+  SHIELDS_STATS: "shieldsStats",
 };
 
 // Placeholder client credential. The real TMDB token lives on the backend and

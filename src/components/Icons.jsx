@@ -1,6 +1,6 @@
 export const WatchAlongLogo = ({ style }) => (
   <img
-    src="./logo.svg"
+    src="/logo.svg"
     alt="WatchAlong"
     width="44"
     height="44"
@@ -345,6 +345,36 @@ export const SubtitlesIcon = ({ size = 16, ...props }) => (
   </svg>
 );
 
+export const FullscreenIcon = ({ size = 16 }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    width={size}
+    height={size}
+  >
+    <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+    <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+    <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+    <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+  </svg>
+);
+export const FullscreenExitIcon = ({ size = 16 }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    width={size}
+    height={size}
+  >
+    <path d="M8 21v-5H3" />
+    <path d="M16 21v-5h5" />
+    <path d="M8 3v5H3" />
+    <path d="M16 3v5h5" />
+  </svg>
+);
 export const PopOutIcon = ({ size = 16 }) => (
   <svg
     width={size}

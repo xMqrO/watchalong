@@ -36,13 +36,9 @@ import {
   RatingShieldIcon,
   RatingLockIcon,
   SourceIcon,
-  ShieldBlockIcon,
-  PopOutIcon,
 } from "../components/Icons";
 import DownloadModal from "../components/DownloadModal";
 import TrailerModal from "../components/TrailerModal";
-import BlockedStatsModal from "../components/BlockedStatsModal";
-import { useBlockedStats } from "../utils/useBlockedStats";
 import MediaCard from "../components/MediaCard";
 import {
   storage,
@@ -117,7 +113,11 @@ export default function MoviePage({
   const webviewRef = useRef(null);
   // Browser-build progress tracking (Electron uses webview.executeJavaScript)
   const browserReaderRef = useRef(null); // OnVid postMessage channel
-  const browserElapsedStartRef = useRef(0); // wall-clock fallback baseline
+  // Wall-clock fallback is anchored to the last trusted position (resume
+  // point or the latest OnVid snapshot) so progress never resets to ~0 when
+  // a source doesn't answer the OnVid API. It also powers auto-watched.
+  const fallbackBaseSecRef = useRef(0); // last trusted position (seconds)
+  const fallbackBaseAtRef = useRef(0); // epoch when fallbackBaseSec was set
   const browserResumeSeekedRef = useRef(false); // only seek to resume once
   // Always-current refs for interval callbacks, avoids stale closures without restarting the interval
   const saveProgressRef = useRef(saveProgress);
@@ -135,10 +135,6 @@ export default function MoviePage({
   // Webview loading overlay
   const [webviewLoading, setWebviewLoading] = useState(false);
   const [playerFullscreen, setPlayerFullscreen] = useState(false);
-  // pipOpen=true: main webview shows about:blank, pop-out window has the real player
-  const [pipOpen, setPipOpen] = useState(false);
-  const pipUrlRef = useRef(null); // URL to restore when pop-out closes
-  const pipWebContentsIdRef = useRef(null); // cached WebContents ID of the pop-out window
 
   // Derived: detect anime before any effects so effects can use it
   const isAnime = useMemo(
@@ -148,15 +144,6 @@ export default function MoviePage({
   const [downloaderFolder, setDownloaderFolder] = useState(
     () => storage.get("downloaderFolder") || "",
   );
-
-  // Blocked request stats
-  const {
-    sessionTotal: blockedSession,
-    alltimeTotal: blockedAlltime,
-    showModal: showBlockedModal,
-    setShowModal: setShowBlockedModal,
-    getSessionDomains: getBlockedDomains,
-  } = useBlockedStats(item.id);
 
   // Age rating
   const [rating, setRating] = useState({ cert: null, minAge: null });
@@ -570,12 +557,16 @@ export default function MoviePage({
     const iframe = webviewRef.current;
     const reader = createOnVidReader(iframe);
     browserReaderRef.current = reader;
-    browserElapsedStartRef.current = Date.now();
     browserResumeSeekedRef.current = false;
+    // Anchor the wall-clock fallback to the saved position so resuming a
+    // movie never restarts progress from 0 (fixes non-OnVid sources).
+    const savedForBase = Number(storage.get("dlTime_" + progressKey) || 0);
+    fallbackBaseSecRef.current = savedForBase;
+    fallbackBaseAtRef.current = Date.now();
 
     let resumeTimer = null;
     if (reader) {
-      const savedSeconds = Number(storage.get("dlTime_" + progressKey) || 0);
+      const savedSeconds = savedForBase;
       if (savedSeconds >= 25) {
         resumeTimer = setTimeout(() => {
           let attempts = 0;
@@ -616,14 +607,19 @@ export default function MoviePage({
         try {
           // ── Browser build: track progress via OnVid postMessage channel ──
           // The website's player iframe is cross-origin, so we use OnVid's
-          // message API. When the source doesn't answer, fall back to
-          // wall-clock elapsed time so resume position still updates.
-          if (!isElectron) {
+          // message API. When the source doesn't answer, fall back to a
+          // wall-clock estimate anchored to the last trusted position so
+          // progress keeps moving (and auto-watched still fires) for EVERY
+          // source — not just OnVid-compatible ones.
+          if (!isElectron || !window.electron?.queryVideoProgress) {
             const reader = browserReaderRef.current;
             const exact = reader?.read() || null;
             if (exact && exact.duration > 0 && exact.currentTime != null) {
               const ct = exact.currentTime;
               lastKnownTimeRef.current = ct;
+              // Re-anchor the wall-clock estimate to the real read
+              fallbackBaseSecRef.current = ct;
+              fallbackBaseAtRef.current = Date.now();
               const p = Math.floor((ct / exact.duration) * 100);
               saveProgressRef.current(progressKey, Math.min(p, 100));
               storage.set("dlTime_" + progressKey, Math.floor(ct));
@@ -637,19 +633,31 @@ export default function MoviePage({
                 onMarkWatchedRef.current?.(progressKey);
               }
             } else if (!exact) {
-              if (!browserElapsedStartRef.current)
-                browserElapsedStartRef.current = Date.now();
-              const elapsed = Math.max(
-                0,
-                (Date.now() - browserElapsedStartRef.current) / 1000,
-              );
-              const totalSecs = d?.runtime ? d.runtime * 60 : 0;
-              lastKnownTimeRef.current = elapsed;
-              if (totalSecs > 0) {
-                const p = Math.floor((elapsed / totalSecs) * 100);
-                saveProgressRef.current(progressKey, Math.min(p, 100));
+              // Fallback: estimate position = last trusted position + wall
+              // time since it was observed. Never starts from 0 on resume.
+              if (!fallbackBaseAtRef.current) {
+                fallbackBaseSecRef.current = 0;
+                fallbackBaseAtRef.current = Date.now();
               }
-              storage.set("dlTime_" + progressKey, Math.floor(elapsed));
+              const estimated =
+                fallbackBaseSecRef.current +
+                Math.max(0, (Date.now() - fallbackBaseAtRef.current) / 1000);
+              const totalSecs = d?.runtime ? d.runtime * 60 : 0;
+              lastKnownTimeRef.current = estimated;
+              if (totalSecs > 0) {
+                const p = Math.floor((estimated / totalSecs) * 100);
+                saveProgressRef.current(progressKey, Math.min(100, p));
+                const remaining = totalSecs - estimated;
+                if (
+                  !autoMarkedRef.current &&
+                  remaining >= 0 &&
+                  remaining <= watchedThreshold
+                ) {
+                  autoMarkedRef.current = true;
+                  onMarkWatchedRef.current?.(progressKey);
+                }
+              }
+              storage.set("dlTime_" + progressKey, Math.floor(estimated));
             }
             reader?.poll();
             return;
@@ -658,16 +666,7 @@ export default function MoviePage({
           const wv = webviewRef.current;
           if (!wv) return;
           let result;
-          // When the pop-out window is open the main webview shows about:blank
-          // -> query the pip window's webContents directly.
-          if (
-            pipWebContentsIdRef.current != null &&
-            window.electron?.queryVideoProgress
-          ) {
-            result = await window.electron.queryVideoProgress(
-              pipWebContentsIdRef.current,
-            );
-          } else if (progressViaFrames && window.electron?.queryVideoProgress) {
+          if (progressViaFrames && window.electron?.queryVideoProgress) {
             result = await window.electron.queryVideoProgress(
               wv.getWebContentsId(),
             );
@@ -727,6 +726,8 @@ export default function MoviePage({
             // If user seeked, update ref to their chosen position immediately
             if (result.recentUserSeek && result.lastUserSeekTo !== null) {
               lastKnownTimeRef.current = result.lastUserSeekTo;
+              fallbackBaseSecRef.current = result.lastUserSeekTo;
+              fallbackBaseAtRef.current = Date.now();
             } else {
               lastKnownTimeRef.current = ct;
             }
@@ -752,6 +753,21 @@ export default function MoviePage({
     return () => {
       clearTimeout(timer);
       clearInterval(interval);
+      // Flush the last known position immediately on teardown (source
+      // switch, pause/stop, navigation) instead of waiting for the next
+      // 5s tick — the interval dies with the effect.
+      const key = progressKey;
+      const last = lastKnownTimeRef.current;
+      if (last > 0) {
+        const total = d?.runtime ? d.runtime * 60 : 0;
+        if (total > 0) {
+          saveProgressRef.current(
+            key,
+            Math.min(100, Math.floor((last / total) * 100)),
+          );
+        }
+        storage.set("dlTime_" + key, Math.floor(last));
+      }
     };
   }, [playing, progressKey, watchedThreshold, playerSource, progressViaFrames]);
 
@@ -784,23 +800,17 @@ export default function MoviePage({
     };
   }, [playing, playerSource]);
 
-  // ── PiP pop-out: navigate main webview away so only one stream is active ──
+  // ── CSS overlay fullscreen (web embeds) ────────────────────────────────────
+  // Kept as an overlay fallback on desktop: Chromium attaches a native Space
+  // toggle (fired on keyup) to a media element that IS the fullscreen element;
+  // that double-toggles OnVid's own keydown handler ("pauses while Space is
+  // held"). The onWebviewEnterFullscreen listener above routes to this overlay
+  // instead of native fullscreen. No user-facing button for it.
   useEffect(() => {
-    if (!playing) return;
-    const openH = window.electron?.onPipOpened?.(async () => {
-      setPipOpen(true);
-      pipWebContentsIdRef.current =
-        (await window.electron.getPipWebContentsId?.()) ?? null;
-    });
-    const closeH = window.electron?.onPipClosed?.(() => {
-      pipUrlRef.current = null;
-      pipWebContentsIdRef.current = null;
-      setPipOpen(false);
-    });
-    return () => {
-      if (openH) window.electron?.offPipOpened?.(openH);
-      if (closeH) window.electron?.offPipClosed?.(closeH);
-    };
+    if (!playing) {
+      setPlayerFullscreen(false);
+      document.documentElement.removeAttribute("data-player-fullscreen");
+    }
   }, [playing]);
 
   const handleSetDownloaderFolder = useCallback((folder) => {
@@ -844,20 +854,18 @@ export default function MoviePage({
 
   // ── Redirect & Popup Shield ───────────────────────────────────────────────
   const shield = useRedirectShield();
-  const realPlayerSrc = pipOpen
-    ? "about:blank"
-    : sourceIsAsync(playerSource)
-      ? resolvedPlayerUrl || "about:blank"
-      : getSourceUrl(
-          playerSource,
-          "movie",
-          item.id,
-          null,
-          null,
-          {},
-          playerAccentColor,
-          playerSubLang,
-        );
+  const realPlayerSrc = sourceIsAsync(playerSource)
+    ? resolvedPlayerUrl || "about:blank"
+    : getSourceUrl(
+        playerSource,
+        "movie",
+        item.id,
+        null,
+        null,
+        {},
+        playerAccentColor,
+        playerSubLang,
+      );
   useEffect(() => {
     if (shield.blocked) return;
     shield.reset();
@@ -994,6 +1002,15 @@ export default function MoviePage({
                 {isSaved ? <BookmarkFillIcon /> : <BookmarkIcon />}
                 {isSaved ? "Saved" : "Save"}
               </button>
+              {!isElectron && (
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setShowDownload(true)}
+                  title="Download this movie"
+                >
+                  <DownloadIcon /> Download
+                </button>
+              )}
               {!isUnreleased &&
                 (isWatched ? (
                   <button
@@ -1138,56 +1155,13 @@ export default function MoviePage({
                 </button>
               </div>
             )}
-            {pipOpen && (
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  zIndex: 20,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  background: "rgba(0,0,0,0.92)",
-                  gap: 16,
-                  borderRadius: "inherit",
-                }}
-              >
-                <PopOutIcon size={36} />
-                <span
-                  style={{
-                    fontSize: 15,
-                    color: "var(--text1)",
-                    fontWeight: 600,
-                  }}
-                >
-                  Playing in pop-out window
-                </span>
-                <span
-                  style={{
-                    fontSize: 12,
-                    color: "var(--text2)",
-                    textAlign: "center",
-                    maxWidth: 260,
-                  }}
-                >
-                  Closing the pop-out will reload the player here.
-                </span>
-                <button
-                  className="player-overlay-btn"
-                  onClick={() => window.electron?.closePipWindow?.()}
-                  style={{ marginTop: 4 }}
-                >
-                  Close pop-out &amp; return
-                </button>
-              </div>
-            )}
             <iframe
               ref={webviewRef}
               src={shield.blocked ? "about:blank" : realPlayerSrc}
               title={`${title} player`}
               allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
               allowFullScreen
+              referrerPolicy="no-referrer"
               onLoad={() => {
                 setWebviewLoading(false);
                 shield.onPlayerLoad();
@@ -1245,54 +1219,6 @@ export default function MoviePage({
                   {dubMode === "sub" ? "SUB" : "DUB"}
                 </button>
               )}
-              {/* Blocked ads & trackers button */}
-              <button
-                className="player-overlay-btn"
-                onClick={() => {
-                  setShowSourceMenu(false);
-                  setShowBlockedModal(true);
-                }}
-                title="Blocked ads & trackers"
-              >
-                <ShieldBlockIcon />
-                {blockedSession > 0 && (
-                  <span className="player-blocked-badge">{blockedSession}</span>
-                )}
-              </button>
-              {/* Pop-out button*/}
-              <button
-                className="player-overlay-btn"
-                onClick={() => {
-                  if (pipOpen) {
-                    window.electron?.closePipWindow?.();
-                    return;
-                  }
-                  const url = sourceIsAsync(playerSource)
-                    ? resolvedPlayerUrl
-                    : getSourceUrl(
-                        playerSource,
-                        "movie",
-                        item.id,
-                        null,
-                        null,
-                        {},
-                        playerAccentColor,
-                        playerSubLang,
-                      );
-                  if (!url) return;
-                  pipUrlRef.current = url;
-                  window.electron?.openPipWindow?.(url, item.title);
-                }}
-                title={pipOpen ? "Close pop-out" : "Pop out player"}
-                disabled={
-                  !pipOpen &&
-                  (webviewLoading ||
-                    !!(sourceIsAsync(playerSource) && !resolvedPlayerUrl))
-                }
-                style={pipOpen ? { color: "var(--red)" } : undefined}
-              >
-                <PopOutIcon />
-              </button>
             </div>
             {showSourceMenu && menuPos && (
               <div
@@ -1443,15 +1369,6 @@ export default function MoviePage({
           trailerKey={trailerKey}
           title={title}
           onClose={() => setShowTrailer(false)}
-        />
-      )}
-
-      {showBlockedModal && (
-        <BlockedStatsModal
-          sessionDomains={getBlockedDomains()}
-          sessionTotal={blockedSession}
-          alltimeTotal={blockedAlltime}
-          onClose={() => setShowBlockedModal(false)}
         />
       )}
 

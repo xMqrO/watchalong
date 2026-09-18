@@ -5,6 +5,10 @@ import { StarIcon, ChevronLeftIcon, ChevronRightIcon } from "./Icons";
 const VISIBLE = 5;
 const HALF = Math.floor(VISIBLE / 2);
 
+// ── Scroll speed ─────────────────────────────────────────────────────────────
+// Read from localStorage; default 230px per step. Lower = faster.
+const SCROLL_STEP = Number(localStorage.getItem('watchalongScrollSpeed')) || 230;
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // Compute visibility ratio of el inside scrollRoot (or viewport)
@@ -53,7 +57,7 @@ const CarouselSlot = memo(function CarouselSlot({
 
   const scale = isCenter ? 1 : abs === 1 ? 0.75 : 0.54;
   const opacity = isCenter ? 1 : abs === 1 ? 0.65 : 0.35;
-  const tx = offset * 230;
+  const tx = offset * SCROLL_STEP;
 
   // Stable date comparison — avoids new Date() on every render by caching today
   const rawDate = item.release_date || item.first_air_date;

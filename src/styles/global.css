@@ -3697,23 +3697,6 @@ kbd {
     opacity: 1;
 }
 
-.player-blocked-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 17px;
-    height: 17px;
-    padding: 0 4px;
-    border-radius: 8px;
-    background: #3dba6f;
-    color: #fff;
-    font-size: 10px;
-    font-weight: 700;
-    line-height: 1;
-    margin-left: 1px;
-    flex-shrink: 0;
-}
-
 .blocked-modal-overlay {
     position: fixed;
     inset: 0;
@@ -3919,6 +3902,147 @@ html[data-win-titlebar][data-maximized] .main {
 ::highlight(settings-search-active) {
     background-color: rgba(255, 140, 0, 0.82);
     color: #111;
+}
+
+/* ── Smoother horizontal scrolling ──────────────────────────────────────── */
+.scroll-row,
+.cards-grid,
+.episodes-grid {
+    -webkit-overflow-scrolling: touch;
+    overscroll-x: contain;
+    scroll-snap-type: x proximity;
+}
+.scroll-row .card,
+.episodes-grid .episode-card {
+    scroll-snap-align: start;
+}
+.cards-grid,
+.episodes-grid {
+    -webkit-overflow-scrolling: touch;
+    overscroll-x: contain;
+}
+.episodes-grid {
+    scroll-snap-type: x proximity;
+}
+.episodes-grid .episode-card {
+    scroll-snap-align: start;
+}
+
+/* ── Densified movie cards ────────────────────────────────────────────── */
+.card {
+    border-radius: var(--radius);
+    transition:
+        border-color 0.2s,
+        box-shadow 0.2s,
+        transform 0.2s;
+}
+.card:hover {
+    border-color: var(--border);
+    box-shadow: var(--red-glow);
+    transform: translateY(-2px);
+}
+.card:focus-visible {
+    outline: 2px solid var(--red);
+    outline-offset: 2px;
+}
+.card:focus {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+}
+
+/* ── Hover scale on cards (dense, no shifting) ────────────────────────── */
+.card:hover {
+    transform: scale(1.02);
+    box-shadow: var(--red-glow);
+}
+.card:focus-visible {
+    transform: scale(1.02);
+}
+
+/* ── Cards grid: tighter, more columns ───────────────────────────────── */
+.cards-grid {
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    gap: 8px;
+}
+body.compact-mode .cards-grid {
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 6px;
+}
+body.compact-mode .card-info {
+    padding: 4px 6px;
+}
+body.compact-mode .card-title {
+    font-size: 10px;
+}
+body.compact-mode .card-year {
+    font-size: 8px;
+}
+.card--compact .card-info {
+    padding: 4px 6px;
+}
+.card--compact .card-title {
+    font-size: 10px;
+}
+.card--compact .card-year {
+    font-size: 8px;
+}
+.card--compact .card-progress-fill {
+    height: 2px;
+}
+.card--compact .card-age-badge--compact {
+    width: 12px;
+    height: 12px;
+}
+.card--compact .WatchedIcon {
+    width: 20px;
+    height: 20px;
+}
+.card--compact .RatingShieldIcon {
+    width: 7px;
+    height: 7px;
+}
+.card--compact .RatingLockIcon {
+    width: 7px;
+    height: 7px;
+}
+
+/* ── Snapshot scrollbar ──────────────────────────────────────────────── */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--red);
+}
+
+/* ── Smoother horizontal scrolling ──────────────────────────────────────── */
+.scroll-row {
+    -webkit-overflow-scrolling: touch;
+    overscroll-x: contain;
+    scroll-snap-type: x proximity;
+}
+.scroll-row .card {
+    scroll-snap-align: start;
+    -webkit-overflow-scrolling: touch;
+}
+
+.cards-grid,
+.episodes-grid {
+    -webkit-overflow-scrolling: touch;
+    overscroll-x: contain;
+}
+.episodes-grid {
+    scroll-snap-type: x proximity;
+}
+.episodes-grid .episode-card {
+    scroll-snap-align: start;
 }
 
 .episode-check-item:hover {

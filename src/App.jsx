@@ -22,7 +22,12 @@ import {
   ACCENT_PRESETS,
 } from "./utils/appearance";
 import { collectBackupData } from "./utils/backup";
-import { tmdbFetch, setApiErrorHandlers, imgUrl } from "./utils/api";
+import {
+  tmdbFetch,
+  setApiErrorHandlers,
+  imgUrl,
+  getEffectiveTmdbLanguage,
+} from "./utils/api";
 import { clearAppCaches } from "./utils/storage";
 import {
   readDiscordRpcSettings,
@@ -31,6 +36,8 @@ import {
   sendIdleActivity,
   clearActivity as clearDiscordActivity,
 } from "./utils/discordPresence";
+import { initShields } from "./utils/shields";
+import { syncSpanishTranslator, t } from "./utils/i18n";
 
 import Sidebar from "./components/Sidebar";
 import CloseConfirmModal from "./components/CloseConfirmModal";
@@ -405,6 +412,19 @@ export default function App() {
     };
   }, []);
 
+  // ── Brave-style Shields (ads/trackers/fingerprinting) ─────────────────────
+  useEffect(() => {
+    initShields();
+
+    // ── Spanish /es translation layer ────────────────────────────────────────
+    // Reads the /es URL prefix. Works passively via MutationObserver so every
+    // lazy-loaded page / component gets translated without edits to itself.
+    syncSpanishTranslator();
+    const syncI18n = () => syncSpanishTranslator();
+    window.addEventListener("popstate", syncI18n);
+    return () => window.removeEventListener("popstate", syncI18n);
+  }, []);
+
   // ── Detect platform for Windows titlebar ──────────────────────────────────
   useEffect(() => {
     if (!window.electron?.getPlatform) return;
@@ -565,7 +585,7 @@ export default function App() {
     if (!apiKey) return;
     const cached = storage.get("trendingCache");
     const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
-    const currentLang = storage.get(STORAGE_KEYS.TMDB_LANG) || "en-US";
+    const currentLang = getEffectiveTmdbLanguage();
     if (
       cached &&
       cached.ts &&
@@ -1208,7 +1228,7 @@ export default function App() {
                   fontSize: 15,
                 }}
               >
-                Laden…
+                {t("Loading…")}
               </div>
             }
           >
@@ -1479,8 +1499,9 @@ export default function App() {
                     <span style={{ color: "var(--red)", fontSize: 15 }}>
                       🎬
                     </span>
-                    New episode
-                    {episodeCheckStatus.entries.length > 1 ? "s" : ""} available
+                    {episodeCheckStatus.entries.length > 1
+                      ? "New episodes available"
+                      : "New episode available"}
                   </div>
                   <button
                     onClick={() => {

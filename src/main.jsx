@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { installWebBridge } from "./utils/webBridge";
 import App from "./App";
 import "./styles/global.css";
+import "./styles/mobile.css";
 
 installWebBridge();
 

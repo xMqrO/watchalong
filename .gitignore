@@ -6,3 +6,6 @@ dist/
 *secret.txt
 server/config.json
 .vercel/
+*.bak
+desktop/release/
+desktop/node_modules/
