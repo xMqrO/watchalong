@@ -127,6 +127,29 @@ export const tmdbFetch = async (path, apiKey) => {
 // https://www.vidking.net/#documentation
 // https://vidfast.vc/ (movie: /movie/{id}?autoPlay=true, tv: /tv/{id}/{s}/{e}?autoPlay=true)
 // https://vidlink.pro/ (movie: /movie/{tmdbId}, tv: /tv/{tmdbId}/{season}/{episode})
+// https://vidpro.pro/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://v2.vidsrc.me/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://vidfast.co/ (movie: /e/movie/{id}, tv: /e/tv/{id}/{season}/{episode})
+// https://superembed.stream/ (movie: /video/movie/{id}, tv: /video/tv/{id}/{season}/{episode})
+// https://vidcore.io/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://rockembed.com/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://www.2embed.stream/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://cinemaos.to/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://primesrc.xyz/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://embed.smashystream.com/ (movie: /playere.php?tmdb={id}, tv: /playere.php?tmdb={id}&season={season}&episode={ep})
+// https://hotstar.com/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://vidnest.xyz/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://tongo.to/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://echoembed.com/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://hdmovies.to/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://mplay.to/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://xpass.to/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://bravoembed.com/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://vidking.xyz/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://111embed.com/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://jadeembed.com/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://rive.to/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
+// https://peachify.me/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
 
 // ── Player Sources ────────────────────────────────────────────────────────────
 // Every source is embed-first (`async: false`): the provider page is rendered
@@ -144,7 +167,7 @@ export const PLAYER_SOURCES = [
     supportsProgress: true,
     async: false,
     serverResolved: true,
-    colorParam: "color", // hex without # → e.g. "e50914"
+    colorParam: "color",
     langParam: null,
     params: {
       overlay: "true",
@@ -162,7 +185,7 @@ export const PLAYER_SOURCES = [
     async: false,
     serverResolved: true,
     colorParam: null,
-    langParam: "ds_lang", // ISO 639-1 language code
+    langParam: "ds_lang",
     params: {},
     movieUrl: (id) => `https://vsembed.su/embed/movie/${id}`,
     tvUrl: (id, season, ep) =>
@@ -176,7 +199,7 @@ export const PLAYER_SOURCES = [
     supportsProgress: true,
     async: false,
     serverResolved: true,
-    colorParam: "color", // hex without # → e.g. "e50914"
+    colorParam: "color",
     langParam: null,
     params: {
       autoPlay: "true",
@@ -216,6 +239,355 @@ export const PLAYER_SOURCES = [
     movieUrl: (id) => `https://vidlink.pro/movie/${id}`,
     tvUrl: (id, season, ep) =>
       `https://vidlink.pro/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "vidpro",
+    label: "VidPro",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://vidpro.pro/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://vidpro.pro/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "vidsrc2",
+    label: "VidSrc v2",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://v2.vidsrc.me/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://v2.vidsrc.me/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "vidfast2",
+    label: "VidFast.co",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {
+      autoPlay: "true",
+    },
+    movieUrl: (id) => `https://vidfast.co/e/movie/${id}?autoPlay=true`,
+    tvUrl: (id, season, ep) =>
+      `https://vidfast.co/e/${id}/${season}/${ep}?autoPlay=true`,
+  },
+  {
+    id: "superembed",
+    label: "SuperEmbed",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://superembed.stream/video/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://superembed.stream/video/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "vidcore",
+    label: "VidCore",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://vidcore.io/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://vidcore.io/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "rockembed",
+    label: "RockEmbed",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://rockembed.com/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://rockembed.com/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "twoembed",
+    label: "2Embed",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://www.2embed.stream/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://www.2embed.stream/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "cinemaos",
+    label: "CinemaOS",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://cinemaos.to/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://cinemaos.to/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "primesrc",
+    label: "PrimeSrc",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://primesrc.xyz/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://primesrc.xyz/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "smashystream",
+    label: "SmashyStream",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://embed.smashystream.com/playere.php?tmdb=${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://embed.smashystream.com/playere.php?tmdb=${id}&season=${season}&episode=${ep}`,
+  },
+  {
+    id: "hotstar",
+    label: "Hotstar",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://hotstar.com/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://hotstar.com/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "vidnest",
+    label: "VidNest",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://vidnest.xyz/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://vidnest.xyz/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "tongo",
+    label: "Tongo",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://tongo.to/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://tongo.to/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "echoembed",
+    label: "EchoEmbed",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://echoembed.com/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://echoembed.com/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "hdmovies",
+    label: "HDMovies",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://hdmovies.to/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://hdmovies.to/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "mplay",
+    label: "MPlay",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://mplay.to/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://mplay.to/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "xpass",
+    label: "XPass",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://xpass.to/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://xpass.to/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "bravoembed",
+    label: "BravoEmbed",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://bravoembed.com/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://bravoembed.com/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "vidking2",
+    label: "Vidking.xyz",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {
+      autoPlay: "true",
+    },
+    movieUrl: (id) => `https://vidking.xyz/embed/movie/${id}?autoPlay=true`,
+    tvUrl: (id, season, ep) =>
+      `https://vidking.xyz/embed/tv/${id}/${season}/${ep}?autoPlay=true`,
+  },
+  {
+    id: "111embed",
+    label: "111Embed",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://111embed.com/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://111embed.com/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "jadeembed",
+    label: "JadeEmbed",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://jadeembed.com/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://jadeembed.com/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "rive",
+    label: "Rive",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://rive.to/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://rive.to/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "peachify",
+    label: "Peachify",
+    tag: null,
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://peachify.me/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://peachify.me/embed/tv/${id}/${season}/${ep}`,
   },
 ];
 export const getSourceUrl = (
