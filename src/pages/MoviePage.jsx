@@ -18,10 +18,12 @@ import {
   fetchAnilistData,
   cleanAnilistDescription,
   isAnimeContent,
-  ANIME_DEFAULT_SOURCE,
   NON_ANIME_DEFAULT_SOURCE,
   NEEDS_INTERCEPT,
-  getNextNonAsyncSource,
+  getNextSource,
+  shouldServerFirstEmbed,
+  markEmbedServerFirst,
+  clearEmbedServerFirst,
 } from "../utils/api";
 import {
   PlayIcon,
@@ -63,6 +65,8 @@ import {
 } from "../utils/playerGamepadScript";
 import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
 import { useRedirectShield } from "../utils/useRedirectShield";
+
+const EMBED_FALLBACK_TIMEOUT_MS = 12000;
 
 export default function MoviePage({
   item,
@@ -131,6 +135,16 @@ export default function MoviePage({
   // Refs mirror the above so the resolve-effect can guard without stale closures
   const resolvingUrlRef = useRef(false);
   const resolvedPlayerUrlRef = useRef(null);
+  // Embed-first flag: when a source's provider iframe fails to load we fall
+  // back to that same source's server resolver (set by the iframe onError).
+  const [embedFallbackActive, setEmbedFallbackActive] = useState(false);
+  const embedFallbackActiveRef = useRef(false);
+  // Set when a real OnVid playback read comes back (proves the embed actually
+  // started streaming); used to cancel the embed → server failover timer.
+  const embeddingProofRef = useRef(false);
+  // True once the embed iframe fires its load event (healthy embed); also
+  // cancels the failover timer.
+  const embedLoadFiredRef = useRef(false);
   const [collection, setCollection] = useState(null); // { name, parts }
   // Webview loading overlay
   const [webviewLoading, setWebviewLoading] = useState(false);
@@ -273,13 +287,15 @@ export default function MoviePage({
     setAnilistData(null);
     resolvedPlayerUrlRef.current = null;
     setResolvedPlayerUrl(null);
-    resolvingUrlRef.current = false;
-    setResolvingUrl(false);
     setResolveError(null);
+    embedFallbackActiveRef.current = false;
+    setEmbedFallbackActive(false);
+    embeddingProofRef.current = false;
+    embedLoadFiredRef.current = false;
     setWebviewLoading(true); // instantly blank the player on every source/item switch
   }, [item.id, playerSource, dubMode]);
 
-  // Fetch AniList data + auto-set source for anime/non-anime
+  // Fetch AniList data for anime content
   useEffect(() => {
     let mounted = true;
     if (isAnime) {
@@ -288,21 +304,6 @@ export default function MoviePage({
           if (mounted && data) setAnilistData(data);
         },
       );
-      // Switch to anime source if current source is not an anime source
-      const currentSrc = PLAYER_SOURCES.find((s) => s.id === playerSource);
-      if (!currentSrc?.tag) {
-        const saved = storage.get("playerSource");
-        const savedSrc = PLAYER_SOURCES.find((s) => s.id === saved);
-        setPlayerSource(savedSrc?.tag ? saved : ANIME_DEFAULT_SOURCE);
-      }
-    } else {
-      // Switch back to non-anime source if current source is anime-only
-      const currentSrc = PLAYER_SOURCES.find((s) => s.id === playerSource);
-      if (currentSrc?.tag) {
-        const saved = storage.get("playerSource");
-        const savedSrc = PLAYER_SOURCES.find((s) => s.id === saved);
-        setPlayerSource(!savedSrc?.tag ? saved : NON_ANIME_DEFAULT_SOURCE);
-      }
     }
     return () => {
       mounted = false;
@@ -314,9 +315,18 @@ export default function MoviePage({
     if (!playing) return;
     const epKey = `movie_${item.id}_${dubMode}`;
 
+    // Embed-first sources fall back to the same source's server resolver when
+    // the provider iframe is already known to be dead on this title.
+    const serverMode = sourceIsAsync(playerSource) || embedFallbackActive;
+    if (!serverMode && shouldServerFirstEmbed(playerSource, epKey)) {
+      embedFallbackActiveRef.current = true;
+      setEmbedFallbackActive(true);
+      return;
+    }
+
     // Auto-failover: if a previous attempt taught us AllManga doesn't have
     // this title, skip straight to the cached fallback source.
-    if (sourceIsAsync(playerSource)) {
+    if (serverMode) {
       const cached = getFailoverSource(epKey);
       if (cached && cached !== playerSource) {
         setM3u8Url(null);
@@ -331,7 +341,7 @@ export default function MoviePage({
       }
     }
 
-    if (!sourceIsAsync(playerSource)) return;
+    if (!serverMode) return;
     // Use refs as guards
     if (resolvedPlayerUrlRef.current || resolvingUrlRef.current) return;
     resolvingUrlRef.current = true;
@@ -341,11 +351,15 @@ export default function MoviePage({
     let mounted = true;
     window.electron
       .resolveAllManga({
+        id: item.id,
+        playerSource,
         title,
         seasonNumber: 1,
         episodeNumber: 1,
         isMovie: true,
         translationType: dubMode,
+        year,
+        imdbId: d.imdb_id || "",
       })
       .then((res) => {
         if (!mounted) return;
@@ -355,7 +369,7 @@ export default function MoviePage({
             window.electron
               .setPlayerVideo({
                 url: res.url,
-                referer: res.referer || "https://allmanga.to",
+                referer: res.referer || "",
                 startTime,
               })
               .then((r) => {
@@ -374,7 +388,7 @@ export default function MoviePage({
         } else {
           // AllManga doesn't have this title → switch to the next source
           // automatically and remember the choice for next time.
-          const next = getNextNonAsyncSource(playerSource);
+          const next = getNextSource(playerSource);
           if (next) {
             setFailoverSource(epKey, next);
             setM3u8Url(null);
@@ -384,7 +398,7 @@ export default function MoviePage({
             setResolveError(null);
             setPlayerSource(next);
           } else {
-            setResolveError(res?.error || "Movie not found on AllManga");
+            setResolveError(res?.error || "Movie not found on this source");
           }
         }
       })
@@ -400,7 +414,39 @@ export default function MoviePage({
     return () => {
       mounted = false;
     };
-  }, [playing, playerSource, dubMode]);
+  }, [playing, playerSource, dubMode, embedFallbackActive]);
+
+  // Embed → server failover, load-watchdog style: a healthy embed always
+  // fires the iframe load event quickly (ads, WAF bodies and all). Only when
+  // BOTH the load event and the error event stay silent (DNS hang, connection
+  // drop, relay dead) do we flip to the same source's server resolver so
+  // playback always starts.
+  useEffect(() => {
+    if (!playing || sourceIsAsync(playerSource) || embedFallbackActiveRef.current) return;
+    if (resolvedPlayerUrlRef.current) return;
+    const epKey = `movie_${item.id}_${dubMode}`;
+    if (shouldServerFirstEmbed(playerSource, epKey)) return;
+    const startedAt = Date.now();
+    let done = false;
+    const interval = setInterval(() => {
+      if (done) return;
+      if (embedLoadFiredRef.current || embeddingProofRef.current) {
+        done = true;
+        clearInterval(interval);
+        return;
+      }
+      if (Date.now() - startedAt > EMBED_FALLBACK_TIMEOUT_MS && !resolvedPlayerUrlRef.current) {
+        done = true;
+        clearInterval(interval);
+        embedFallbackActiveRef.current = true;
+        setEmbedFallbackActive(true);
+      }
+    }, 1000);
+    return () => {
+      done = true;
+      clearInterval(interval);
+    };
+  }, [playing, playerSource, dubMode, item.id]);
 
   useEffect(() => {
     if (!window.electron) return;
@@ -615,6 +661,7 @@ export default function MoviePage({
             const reader = browserReaderRef.current;
             const exact = reader?.read() || null;
             if (exact && exact.duration > 0 && exact.currentTime != null) {
+              embeddingProofRef.current = true;
               const ct = exact.currentTime;
               lastKnownTimeRef.current = ct;
               // Re-anchor the wall-clock estimate to the real read
@@ -854,7 +901,7 @@ export default function MoviePage({
 
   // ── Redirect & Popup Shield ───────────────────────────────────────────────
   const shield = useRedirectShield();
-  const realPlayerSrc = sourceIsAsync(playerSource)
+  const realPlayerSrc = sourceIsAsync(playerSource) || embedFallbackActive
     ? resolvedPlayerUrl || "about:blank"
     : getSourceUrl(
         playerSource,
@@ -1074,13 +1121,15 @@ export default function MoviePage({
                 <div className="spinner" />
                 <span style={{ fontSize: 14, color: "var(--text2)" }}>
                   {resolvingUrl
-                    ? "Looking up movie on AllManga…"
+                    ? "Looking up movie…"
                     : `Loading ${PLAYER_SOURCES.find((s) => s.id === playerSource)?.label ?? "source"}…`}
                 </span>
               </div>
             )}
             {/* AllManga: error if lookup failed */}
-            {sourceIsAsync(playerSource) && resolveError && !resolvingUrl && (
+            {(sourceIsAsync(playerSource) || embedFallbackActive) &&
+              resolveError &&
+              !resolvingUrl && (
               <div
                 style={{
                   position: "absolute",
@@ -1097,7 +1146,7 @@ export default function MoviePage({
               >
                 <span style={{ fontSize: 28 }}>⚠️</span>
                 <span style={{ fontSize: 14, color: "var(--text2)" }}>
-                  Movie not found on AllManga
+Movie not found on this source
                 </span>
                 <span style={{ fontSize: 12, color: "var(--text3)" }}>
                   {resolveError}
@@ -1164,9 +1213,23 @@ export default function MoviePage({
               referrerPolicy={playerSource === "vixsrc" ? "origin" : "no-referrer"}
               onLoad={() => {
                 setWebviewLoading(false);
+                embedLoadFiredRef.current = true;
                 shield.onPlayerLoad();
+                if (!sourceIsAsync(playerSource)) {
+                  clearEmbedServerFirst(
+                    playerSource,
+                    `movie_${item.id}_${dubMode}`,
+                  );
+                }
               }}
-              onError={() => setWebviewLoading(false)}
+              onError={() => {
+                setWebviewLoading(false);
+                if (!sourceIsAsync(playerSource)) {
+                  markEmbedServerFirst(playerSource, `movie_${item.id}_${dubMode}`);
+                  embedFallbackActiveRef.current = true;
+                  setEmbedFallbackActive(true);
+                }
+              }}
               style={{
                 position: "absolute",
                 inset: 0,
@@ -1176,7 +1239,8 @@ export default function MoviePage({
                 background: "#000",
                 visibility:
                   webviewLoading ||
-                  (sourceIsAsync(playerSource) && !resolvedPlayerUrl)
+                  ((sourceIsAsync(playerSource) || embedFallbackActive) &&
+                    !resolvedPlayerUrl)
                     ? "hidden"
                     : "visible",
               }}
@@ -1198,7 +1262,7 @@ export default function MoviePage({
                 {PLAYER_SOURCES.find((s) => s.id === playerSource)?.label ??
                   "Source"}
               </button>
-              {/* Sub/Dub toggle, only for async (AllManga) sources */}
+              {/* Sub/Dub toggle, only for async sources */}
               {sourceIsAsync(playerSource) && (
                 <button
                   className="player-overlay-btn"
@@ -1240,6 +1304,7 @@ export default function MoviePage({
                       if (src.id === playerSource) return;
                       // Manual selection wins over auto-failover
                       clearFailoverSource(`movie_${item.id}_${dubMode}`);
+                      clearEmbedServerFirst(src.id, `movie_${item.id}_${dubMode}`);
                       setPlayerSource(src.id);
                       storage.set(STORAGE_KEYS.PLAYER_SOURCE, src.id);
                       setM3u8Url(null);
@@ -1377,7 +1442,7 @@ export default function MoviePage({
           onClose={() => setShowDownload(false)}
           m3u8Url={m3u8Url}
           streamUrl={
-            sourceIsAsync(playerSource)
+            sourceIsAsync(playerSource) || embedFallbackActive
               ? resolvedPlayerUrl
               : m3u8Url
           }

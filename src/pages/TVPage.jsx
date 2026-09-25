@@ -25,11 +25,16 @@ import {
   buildAnilistSeasons,
   cleanAnilistDescription,
   isAnimeContent,
-  ANIME_DEFAULT_SOURCE,
   NON_ANIME_DEFAULT_SOURCE,
   NEEDS_INTERCEPT,
-  getNextNonAsyncSource,
+  getNextSource,
+  shouldServerFirstEmbed,
+  markEmbedServerFirst,
+  clearEmbedServerFirst,
 } from "../utils/api";
+
+const EMBED_FALLBACK_TIMEOUT_MS = 12000;
+
 import {
   BookmarkIcon,
   BookmarkFillIcon,
@@ -423,6 +428,16 @@ export default function TVPage({
   // Refs mirror the above so the resolve-effect can guard without stale closures
   const resolvingUrlRef = useRef(false);
   const resolvedPlayerUrlRef = useRef(null);
+  // Embed-first flag: when a source's provider iframe fails to load we fall
+  // back to that same source's server resolver (set by the iframe onError).
+  const [embedFallbackActive, setEmbedFallbackActive] = useState(false);
+  const embedFallbackActiveRef = useRef(false);
+  // Set when a real OnVid playback read comes back (proves the embed actually
+  // started streaming); used to cancel the embed → server failover timer.
+  const embeddingProofRef = useRef(false);
+  // True once the embed iframe fires its load event (healthy embed); also
+  // cancels the failover timer.
+  const embedLoadFiredRef = useRef(false);
   const [anilistData, setAnilistData] = useState(null);
   const [anilistSeasons, setAnilistSeasons] = useState(null); // [{seasonNum, title, episodes, year}]
   const [anilistLoading, setAnilistLoading] = useState(false);
@@ -647,6 +662,10 @@ export default function TVPage({
     resolvingUrlRef.current = false;
     setResolvingUrl(false);
     setResolveError(null);
+    embedFallbackActiveRef.current = false;
+    setEmbedFallbackActive(false);
+    embeddingProofRef.current = false;
+    embedLoadFiredRef.current = false;
     setWebviewLoading(true); // instantly blank the player on every source/episode switch
   }, [
     item.id,
@@ -676,22 +695,8 @@ export default function TVPage({
         .catch(() => {
           if (mounted) setAnilistLoading(false);
         });
-      // Switch to anime source if current source is not an anime source
-      const currentSrc = PLAYER_SOURCES.find((s) => s.id === playerSource);
-      if (!currentSrc?.tag) {
-        const saved = storage.get("playerSource");
-        const savedSrc = PLAYER_SOURCES.find((s) => s.id === saved);
-        setPlayerSource(savedSrc?.tag ? saved : ANIME_DEFAULT_SOURCE);
-      }
     } else {
       setAnilistLoading(false);
-      // Switch back to non-anime source if current source is anime-only
-      const currentSrc = PLAYER_SOURCES.find((s) => s.id === playerSource);
-      if (currentSrc?.tag) {
-        const saved = storage.get("playerSource");
-        const savedSrc = PLAYER_SOURCES.find((s) => s.id === saved);
-        setPlayerSource(!savedSrc?.tag ? saved : NON_ANIME_DEFAULT_SOURCE);
-      }
     }
     return () => {
       mounted = false;
@@ -704,9 +709,18 @@ export default function TVPage({
     const epNum = selectedEp.episode_number;
     const epKey = `tv_${item.id}_s${selectedSeason}_e${epNum}_${dubMode}`;
 
+    // Embed-first sources fall back to the same source's server resolver when
+    // the provider iframe is already known to be dead on this episode.
+    const serverMode = isAsync || embedFallbackActive;
+    if (!serverMode && shouldServerFirstEmbed(playerSource, epKey)) {
+      embedFallbackActiveRef.current = true;
+      setEmbedFallbackActive(true);
+      return;
+    }
+
     // Auto-failover: if a previous attempt taught us AllManga doesn't have
     // this episode, skip straight to the cached fallback source.
-    if (isAsync) {
+    if (serverMode) {
       const cached = getFailoverSource(epKey);
       if (cached && cached !== playerSource) {
         setM3u8Url(null);
@@ -721,7 +735,7 @@ export default function TVPage({
       }
     }
 
-    if (!isAsync) return;
+    if (!serverMode) return;
     // Use refs as guards
     if (resolvedPlayerUrlRef.current || resolvingUrlRef.current) return;
     resolvingUrlRef.current = true;
@@ -732,10 +746,14 @@ export default function TVPage({
     let mounted = true;
     window.electron
       .resolveAllManga({
-        title,
+        id: item.id,
+        playerSource,
+        title: item.name || item.title || "",
         seasonNumber: selectedSeason,
         episodeNumber: epNum,
         translationType: dubMode,
+        year: String((item.first_air_date || "").slice(0, 4)),
+        imdbId: "",
       })
       .then((res) => {
         if (!mounted) return;
@@ -745,7 +763,7 @@ export default function TVPage({
             window.electron
               .setPlayerVideo({
                 url: res.url,
-                referer: res.referer || "https://allmanga.to",
+                referer: res.referer || "",
                 startTime,
               })
               .then((r) => {
@@ -765,7 +783,7 @@ export default function TVPage({
         } else {
           // AllManga doesn't have this episode → switch to the next source
           // automatically and remember the choice for next time.
-          const next = getNextNonAsyncSource(playerSource);
+          const next = getNextSource(playerSource);
           if (next) {
             setFailoverSource(epKey, next);
             setM3u8Url(null);
@@ -775,7 +793,7 @@ export default function TVPage({
             setResolveError(null);
             setPlayerSource(next);
           } else {
-            setResolveError(res?.error || "Episode not found on AllManga");
+            setResolveError(res?.error || "Episode not found on this source");
           }
         }
       })
@@ -791,7 +809,7 @@ export default function TVPage({
     return () => {
       mounted = false;
     };
-  }, [playing, selectedEp, playerSource, selectedSeason, dubMode]);
+  }, [playing, selectedEp, playerSource, selectedSeason, dubMode, embedFallbackActive]);
 
   useEffect(() => {
     if (!window.electron) return;
@@ -1203,6 +1221,38 @@ export default function TVPage({
     };
   }, [playing, playerSource, item.id, selectedEp?.episode_number]);
 
+  // Embed → server failover, load-watchdog style: a healthy embed always
+  // fires the iframe load event quickly (ads, WAF bodies and all). Only when
+  // BOTH the load event and the error event stay silent (DNS hang, connection
+  // drop, relay dead) do we flip to the same source's server resolver so
+  // playback always starts.
+  useEffect(() => {
+    if (!playing || sourceIsAsync(playerSource) || embedFallbackActiveRef.current) return;
+    if (resolvedPlayerUrlRef.current) return;
+    const epKey = currentProgressKey;
+    if (shouldServerFirstEmbed(playerSource, epKey)) return;
+    const startedAt = Date.now();
+    let done = false;
+    const interval = setInterval(() => {
+      if (done) return;
+      if (embedLoadFiredRef.current || embeddingProofRef.current) {
+        done = true;
+        clearInterval(interval);
+        return;
+      }
+      if (Date.now() - startedAt > EMBED_FALLBACK_TIMEOUT_MS && !resolvedPlayerUrlRef.current) {
+        done = true;
+        clearInterval(interval);
+        embedFallbackActiveRef.current = true;
+        setEmbedFallbackActive(true);
+      }
+    }, 1000);
+    return () => {
+      done = true;
+      clearInterval(interval);
+    };
+  }, [playing, playerSource, item.id, selectedEp?.episode_number]);
+
   // ── Browser build: OnVid postMessage channel + resume saved progress ───────
   // The website's player iframe is cross-origin, so we track progress through
   // OnVid's message API (see browserPlayer.js). On attach, seek back to the
@@ -1345,6 +1395,7 @@ export default function TVPage({
             const reader = browserReaderRef.current;
             const exact = reader?.read() || null;
             if (exact && exact.duration > 0 && exact.currentTime != null) {
+              embeddingProofRef.current = true;
               durationRef.current = exact.duration;
               const ct = exact.currentTime;
               lastKnownTimeRef.current = ct;
@@ -1799,7 +1850,7 @@ export default function TVPage({
 
   // ── Redirect & Popup Shield ───────────────────────────────────────────────
   const shield = useRedirectShield();
-  const realPlayerSrc = isAsync
+  const realPlayerSrc = isAsync || embedFallbackActive
     ? resolvedPlayerUrl || "about:blank"
     : getSourceUrl(
         playerSource,
@@ -1998,13 +2049,13 @@ export default function TVPage({
                     <div className="spinner" />
                     <span style={{ fontSize: 14, color: "var(--text2)" }}>
                       {resolvingUrl
-                        ? "Looking up episode on AllManga…"
+                        ? "Looking up episode…"
                         : `Loading ${PLAYER_SOURCES.find((s) => s.id === playerSource)?.label ?? "source"}…`}
                     </span>
                   </div>
                 )}
                 {/* error if lookup failed */}
-                {isAsync && resolveError && !resolvingUrl && (
+                {(isAsync || embedFallbackActive) && resolveError && !resolvingUrl && (
                   <div
                     style={{
                       position: "absolute",
@@ -2021,7 +2072,7 @@ export default function TVPage({
                   >
                     <span style={{ fontSize: 28 }}>⚠️</span>
                     <span style={{ fontSize: 14, color: "var(--text2)" }}>
-                      Episode not found on AllManga
+Episode not found on this source
                     </span>
                     <span style={{ fontSize: 12, color: "var(--text3)" }}>
                       {resolveError}
@@ -2258,9 +2309,26 @@ export default function TVPage({
                   referrerPolicy={playerSource === "vixsrc" ? "origin" : "no-referrer"}
                   onLoad={() => {
                     setWebviewLoading(false);
+                    embedLoadFiredRef.current = true;
                     shield.onPlayerLoad();
+                    if (!isAsync && selectedEp) {
+                      clearEmbedServerFirst(
+                        playerSource,
+                        `tv_${item.id}_s${selectedSeason}_e${selectedEp.episode_number}_${dubMode}`,
+                      );
+                    }
                   }}
-                  onError={() => setWebviewLoading(false)}
+                  onError={() => {
+                    setWebviewLoading(false);
+                    if (!isAsync && selectedEp) {
+                      markEmbedServerFirst(
+                        playerSource,
+                        `tv_${item.id}_s${selectedSeason}_e${selectedEp.episode_number}_${dubMode}`,
+                      );
+                      embedFallbackActiveRef.current = true;
+                      setEmbedFallbackActive(true);
+                    }
+                  }}
                   style={{
                     position: "absolute",
                     inset: 0,
@@ -2271,7 +2339,7 @@ export default function TVPage({
                     boxShadow: "none",
                     background: "black",
                     visibility:
-                      webviewLoading || (isAsync && !resolvedPlayerUrl)
+                      webviewLoading || ((isAsync || embedFallbackActive) && !resolvedPlayerUrl)
                         ? "hidden"
                         : "visible",
                   }}
@@ -2294,7 +2362,7 @@ export default function TVPage({
                     {PLAYER_SOURCES.find((s) => s.id === playerSource)?.label ??
                       "Source"}
                   </button>
-                  {/* Sub/Dub toggle, only for AllManga */}
+                  {/* Sub/Dub toggle, only for async sources */}
                   {isAsync && (
                     <button
                       className="player-overlay-btn"
@@ -2337,6 +2405,10 @@ export default function TVPage({
                           // Manual selection wins over auto-failover
                           if (selectedEp) {
                             clearFailoverSource(
+                              `tv_${item.id}_s${selectedSeason}_e${selectedEp.episode_number}_${dubMode}`,
+                            );
+                            clearEmbedServerFirst(
+                              src.id,
                               `tv_${item.id}_s${selectedSeason}_e${selectedEp.episode_number}_${dubMode}`,
                             );
                           }
@@ -2685,7 +2757,7 @@ export default function TVPage({
         <DownloadModal
           onClose={() => setShowDownload(false)}
           m3u8Url={m3u8Url}
-          streamUrl={isAsync ? resolvedPlayerUrl : m3u8Url}
+          streamUrl={isAsync || embedFallbackActive ? resolvedPlayerUrl : m3u8Url}
           subtitles={interceptedSubs}
           mediaName={mediaName}
           downloaderFolder={downloaderFolder}

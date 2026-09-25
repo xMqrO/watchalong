@@ -42,18 +42,21 @@ async function sendFile(res, filePath) {
 // (the page would try to load /smallville/assets/...). Serve a version whose
 // references are rooted at "/". The dist file on disk is left untouched.
 let indexHtmlRewritten = null;
+let indexStamp = 0;
 async function sendIndex(res) {
-  if (!indexHtmlRewritten) {
-    try {
+  try {
+    const st = await stat(join(DIST, "index.html"));
+    if (!indexHtmlRewritten || st.mtimeMs !== indexStamp) {
       const raw = await readFile(join(DIST, "index.html"), "utf8");
       indexHtmlRewritten = raw
         .replaceAll("./assets/", "/assets/")
         .replaceAll("./logo.svg", "/logo.svg");
-    } catch {
-      res.statusCode = 404;
-      res.end("Not found");
-      return;
+      indexStamp = st.mtimeMs;
     }
+  } catch {
+    res.statusCode = 404;
+    res.end("Not found");
+    return;
   }
   res.statusCode = 200;
   res.setHeader("Content-Type", "text/html; charset=utf-8");

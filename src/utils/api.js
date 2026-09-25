@@ -130,16 +130,39 @@ export const tmdbFetch = async (path, apiKey) => {
 // https://vidlink.pro/ (movie: /movie/{tmdbId}, tv: /tv/{tmdbId}/{season}/{episode})
 
 // ── Player Sources ────────────────────────────────────────────────────────────
-// supportsProgress: true = executeJavaScript tracking works for this source
+// Every source is embed-first (`async: false`): the provider page is rendered
+// directly in the player iframe, so playback happens in the user's browser and
+// the CDNs see the user's own (unblocked) IP. `serverResolved: true` flags that
+// the same source ALSO has a validated server-side resolver (/api/player/resolve
+// or /api/vixsrc/resolve) used as an automatic fallback when the embed fails —
+// e.g. a WAF/rate-limit that only blocks server IPs, or a flaky embed host.
 export const PLAYER_SOURCES = [
+  {
+    id: "vixsrc",
+    label: "VixSrc",
+    tag: null,
+    note: null,
+    supportsProgress: true,
+    async: false,
+    serverResolved: true,
+    clean: true, // dedicated resolver + uBO-stripped playlist
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://vixsrc.to/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://vixsrc.to/tv/${id}/${season}/${ep}`,
+  },
   {
     id: "videasy",
     label: "Videasy",
     tag: null,
     note: null,
     supportsProgress: true,
+    async: false,
+    serverResolved: true,
     colorParam: "color", // hex without # → e.g. "e50914"
-    langParam: null, // no subtitle lang param
+    langParam: null,
     params: {
       overlay: "true",
     },
@@ -153,8 +176,9 @@ export const PLAYER_SOURCES = [
     tag: null,
     note: null,
     supportsProgress: true,
-    progressViaFrames: true, // video is in a nested iframe, needs main-process frame query
-    colorParam: null, // vidsrc doesn't support color param
+    async: false,
+    serverResolved: true,
+    colorParam: null,
     langParam: "ds_lang", // ISO 639-1 language code
     params: {},
     movieUrl: (id) => `https://vsembed.su/embed/movie/${id}`,
@@ -167,6 +191,8 @@ export const PLAYER_SOURCES = [
     tag: null,
     note: null,
     supportsProgress: true,
+    async: false,
+    serverResolved: true,
     colorParam: "color", // hex without # → e.g. "e50914"
     langParam: null,
     params: {
@@ -177,25 +203,13 @@ export const PLAYER_SOURCES = [
       `https://www.vidking.net/embed/tv/${id}/${season}/${ep}`,
   },
   {
-    id: "vixsrc",
-    label: "VixSrc",
-    tag: null,
-    note: null,
-    supportsProgress: true,
-    progressViaFrames: true, // video lives in a nested iframe, needs main-process frame query
-    colorParam: null,
-    langParam: null,
-    params: {},
-    movieUrl: (id) => `https://vixsrc.to/movie/${id}`,
-    tvUrl: (id, season, ep) =>
-      `https://vixsrc.to/tv/${id}/${season}/${ep}`,
-  },
-  {
     id: "vidfast",
     label: "VidFast",
     tag: null,
     note: null,
     supportsProgress: true,
+    async: false,
+    serverResolved: true,
     colorParam: null,
     langParam: null,
     params: {
@@ -211,24 +225,14 @@ export const PLAYER_SOURCES = [
     tag: null,
     note: null,
     supportsProgress: true,
-    progressViaFrames: true, // video lives in a nested iframe, needs main-process frame query
+    async: false,
+    serverResolved: true,
     colorParam: null,
     langParam: null,
     params: {},
     movieUrl: (id) => `https://vidlink.pro/movie/${id}`,
     tvUrl: (id, season, ep) =>
       `https://vidlink.pro/tv/${id}/${season}/${ep}`,
-  },
-  {
-    id: "allmanga",
-    label: "AllManga",
-    tag: "ANIME",
-    note: null,
-    supportsProgress: true,
-    async: true,
-    params: {},
-    movieUrl: (_id) => "https://allmanga.to",
-    tvUrl: (_id, _season, _ep) => "https://allmanga.to",
   },
 ];
 export const getSourceUrl = (
@@ -279,15 +283,52 @@ export const sourceProgressViaFrames = (sourceId) =>
 export const sourceIsAsync = (sourceId) =>
   PLAYER_SOURCES.find((s) => s.id === sourceId)?.async ?? false;
 
-// Return the next non-async source after `currentId` in PLAYER_SOURCES order
-export const getNextNonAsyncSource = (currentId) => {
-  const nonAsync = PLAYER_SOURCES.filter((s) => !s.async);
-  if (nonAsync.length === 0) return null;
-  const idx = nonAsync.findIndex((s) => s.id === currentId);
-  // If currentId is itself non-async, return the next one (wrap around).
-  // If currentId is async (e.g. AllManga), just return the first non-async.
-  if (idx < 0) return nonAsync[0].id;
-  return nonAsync[(idx + 1) % nonAsync.length].id;
+// Sources embed from the browser by default; "next source" walks the full list.
+export const getNextSource = (currentId) => {
+  const all = PLAYER_SOURCES.map((s) => s.id);
+  if (all.length === 0) return null;
+  const idx = all.indexOf(currentId);
+  if (idx < 0) return all[0];
+  return all[(idx + 1) % all.length];
+};
+
+// ── Embed → server-first preference ───────────────────────────────────────────
+// When a source's embed repeatedly fails on a given title/episode we remember
+// to go straight to that source's server resolver next time, skipping a brief
+// broken-embed flash. Manual source selection clears the preference.
+
+const EMBED_SERVER_FIRST_KEY = "watchalong_embed_server_first";
+
+function readEmbedServerFirst() {
+  try {
+    return JSON.parse(localStorage.getItem(EMBED_SERVER_FIRST_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+export const shouldServerFirstEmbed = (sourceId, epKey) => {
+  try {
+    return !!readEmbedServerFirst()[`${sourceId}:${epKey}`];
+  } catch {
+    return false;
+  }
+};
+
+export const markEmbedServerFirst = (sourceId, epKey) => {
+  try {
+    const map = readEmbedServerFirst();
+    map[`${sourceId}:${epKey}`] = true;
+    localStorage.setItem(EMBED_SERVER_FIRST_KEY, JSON.stringify(map));
+  } catch {}
+};
+
+export const clearEmbedServerFirst = (sourceId, epKey) => {
+  try {
+    const map = readEmbedServerFirst();
+    delete map[`${sourceId}:${epKey}`];
+    localStorage.setItem(EMBED_SERVER_FIRST_KEY, JSON.stringify(map));
+  } catch {}
 };
 
 // Sources that require a transparent webRequest intercept to load properly
@@ -501,9 +542,8 @@ export const isAnimeContent = (item, details) => {
   return hasAnimation && (lang === "ja" || countries.includes("JP"));
 };
 
-// Default sources
-export const ANIME_DEFAULT_SOURCE = "allmanga";
-export const NON_ANIME_DEFAULT_SOURCE = "vidking";
+// Default source: the reliable, clean, server-resolved one.
+export const NON_ANIME_DEFAULT_SOURCE = "vixsrc";
 
 // ── Episode Group fetch (localStorage + in-memory cache, 7-day TTL) ─────────
 // Episode groups almost never change -> cache aggressively across sessions.

@@ -421,6 +421,43 @@ function installInterceptors() {
   );
 }
 
+// ── Service worker blockers (uBO-engine) ────────────────────────────────────
+// The service worker (src/utils/ubo) blocks third-party requests from the
+// player/media layer that the page-context interceptors above cannot see; it
+// reports every block back here so the same "blocked" counters stay accurate.
+
+function swTypeToStatKey(type) {
+  if (type === "script") return "scripts";
+  if (type === "image") return "images";
+  if (type === "xmlhttprequest" || type === "media" || type === "sub_frame") return "xhr";
+  return "other";
+}
+
+let swListenerInstalled = false;
+
+function installSwBlockListener() {
+  if (swListenerInstalled) return;
+  if (!("serviceWorker" in navigator)) return;
+  swListenerInstalled = true;
+
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    const data = event.data;
+    if (!data || data.type !== "ubo-blocked") return;
+    bumpStat(swTypeToStatKey(data.reqType));
+  });
+
+  // Teach the SW what the current top document is (SPA route changes).
+  const postOrigin = () => {
+    navigator.serviceWorker.controller?.postMessage({
+      type: "ubo-origin",
+      url: location.href,
+    });
+  };
+  window.addEventListener("popstate", postOrigin);
+  window.addEventListener("hashchange", postOrigin);
+  navigator.serviceWorker.ready.then(postOrigin);
+}
+
 // ── Forget me when I close this site ────────────────────────────────────────
 
 let forgetHandlerInstalled = false;
@@ -487,6 +524,7 @@ export function initShields() {
   const settings = loadShieldsSettings();
   applyFingerprintProtections(settings);
   installInterceptors();
+  installSwBlockListener();
 
   window.addEventListener(SW.shieldsChanged, () => {
     const next = loadShieldsSettings();

@@ -5,6 +5,7 @@ dist/
 *.zip
 *secret.txt
 server/config.json
+server/.ubo-cache.bin
 .vercel/
 *.bak
 desktop/release/
