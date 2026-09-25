@@ -24,6 +24,7 @@ import {
   shouldServerFirstEmbed,
   markEmbedServerFirst,
   clearEmbedServerFirst,
+  embedBlockedByOrigin,
 } from "../utils/api";
 import {
   PlayIcon,
@@ -139,6 +140,12 @@ export default function MoviePage({
   // back to that same source's server resolver (set by the iframe onError).
   const [embedFallbackActive, setEmbedFallbackActive] = useState(false);
   const embedFallbackActiveRef = useRef(false);
+  // True when the source must be resolved server-side: it is async natively,
+  // or its embed is WAF-blocked on the deployed *.vercel.app origin.
+  const isAsync = useMemo(
+    () => sourceIsAsync(playerSource) || embedBlockedByOrigin(playerSource),
+    [playerSource],
+  );
   // Set when a real OnVid playback read comes back (proves the embed actually
   // started streaming); used to cancel the embed → server failover timer.
   const embeddingProofRef = useRef(false);
@@ -316,8 +323,9 @@ export default function MoviePage({
     const epKey = `movie_${item.id}_${dubMode}`;
 
     // Embed-first sources fall back to the same source's server resolver when
-    // the provider iframe is already known to be dead on this title.
-    const serverMode = sourceIsAsync(playerSource) || embedFallbackActive;
+    // the provider iframe is already known to be dead on this title, or when
+    // the deployed vercel.app origin gets the embed WAF-blocked by Referer.
+    const serverMode = isAsync || embedFallbackActive;
     if (!serverMode && shouldServerFirstEmbed(playerSource, epKey)) {
       embedFallbackActiveRef.current = true;
       setEmbedFallbackActive(true);
@@ -422,7 +430,7 @@ export default function MoviePage({
   // drop, relay dead) do we flip to the same source's server resolver so
   // playback always starts.
   useEffect(() => {
-    if (!playing || sourceIsAsync(playerSource) || embedFallbackActiveRef.current) return;
+    if (!playing || isAsync || embedFallbackActiveRef.current) return;
     if (resolvedPlayerUrlRef.current) return;
     const epKey = `movie_${item.id}_${dubMode}`;
     if (shouldServerFirstEmbed(playerSource, epKey)) return;
@@ -901,7 +909,7 @@ export default function MoviePage({
 
   // ── Redirect & Popup Shield ───────────────────────────────────────────────
   const shield = useRedirectShield();
-  const realPlayerSrc = sourceIsAsync(playerSource) || embedFallbackActive
+  const realPlayerSrc = isAsync || embedFallbackActive
     ? resolvedPlayerUrl || "about:blank"
     : getSourceUrl(
         playerSource,
@@ -1127,7 +1135,7 @@ export default function MoviePage({
               </div>
             )}
             {/* AllManga: error if lookup failed */}
-            {(sourceIsAsync(playerSource) || embedFallbackActive) &&
+            {(isAsync || embedFallbackActive) &&
               resolveError &&
               !resolvingUrl && (
               <div
@@ -1215,7 +1223,7 @@ Movie not found on this source
                 setWebviewLoading(false);
                 embedLoadFiredRef.current = true;
                 shield.onPlayerLoad();
-                if (!sourceIsAsync(playerSource)) {
+                if (!isAsync) {
                   clearEmbedServerFirst(
                     playerSource,
                     `movie_${item.id}_${dubMode}`,
@@ -1224,7 +1232,7 @@ Movie not found on this source
               }}
               onError={() => {
                 setWebviewLoading(false);
-                if (!sourceIsAsync(playerSource)) {
+                if (!isAsync) {
                   markEmbedServerFirst(playerSource, `movie_${item.id}_${dubMode}`);
                   embedFallbackActiveRef.current = true;
                   setEmbedFallbackActive(true);
@@ -1239,7 +1247,7 @@ Movie not found on this source
                 background: "#000",
                 visibility:
                   webviewLoading ||
-                  ((sourceIsAsync(playerSource) || embedFallbackActive) &&
+                  ((isAsync || embedFallbackActive) &&
                     !resolvedPlayerUrl)
                     ? "hidden"
                     : "visible",
@@ -1263,7 +1271,7 @@ Movie not found on this source
                   "Source"}
               </button>
               {/* Sub/Dub toggle, only for async sources */}
-              {sourceIsAsync(playerSource) && (
+              {isAsync && (
                 <button
                   className="player-overlay-btn"
                   onClick={() => {
@@ -1442,7 +1450,7 @@ Movie not found on this source
           onClose={() => setShowDownload(false)}
           m3u8Url={m3u8Url}
           streamUrl={
-            sourceIsAsync(playerSource) || embedFallbackActive
+            isAsync || embedFallbackActive
               ? resolvedPlayerUrl
               : m3u8Url
           }

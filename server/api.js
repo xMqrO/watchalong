@@ -448,8 +448,38 @@ async function handleVixsrcResolve(req, res) {
     sendJson(res, 400, { error: "Invalid JSON body" });
     return;
   }
+  const bodySafe = body || {};
+  // Last-resort mirror: when vixsrc.to's own API/embed/playlist WAF-blocks us
+  // (403 on Vercel/your-IP referers) we serve the same title from the shared
+  // videasy mirror so the "VixSrc" source always plays.
+  async function sendVixsrcMirror() {
+    try {
+      const fallback = await resolveProviderStream({
+        provider: "videasy",
+        type: bodySafe.kind === "tv" ? "tv" : "movie",
+        id: bodySafe.id,
+        season: Number(bodySafe.season) || 1,
+        episode: Number(bodySafe.episode) || 1,
+        title: "",
+        year: "",
+        imdbId: "",
+      });
+      if (!fallback.ok) return false;
+      const playUrl = `/api/player/play?u=${encodeURIComponent(fallback.url)}&r=${encodeURIComponent(fallback.referer)}`;
+      sendJson(res, 200, {
+        ok: true,
+        url: `/api/player?u=${encodeURIComponent(playUrl)}`,
+        m3u8: fallback.url,
+        referer: fallback.referer,
+        provider: "videasy",
+        kind: "hls",
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
   try {
-    const bodySafe = body || {};
     const playlistUrl = await resolveVixsrcPlaylistUrl(bodySafe);
     // Verify the stream playlist is actually reachable (vixsrc's /playlist is
     // WAF-guarded and may 403 us). Only serve the native player when healthy;
@@ -463,31 +493,11 @@ async function handleVixsrcResolve(req, res) {
       });
       return;
     }
-    const fallback = await resolveProviderStream({
-      provider: "videasy",
-      type: bodySafe.kind === "tv" ? "tv" : "movie",
-      id: bodySafe.id,
-      season: Number(bodySafe.season) || 1,
-      episode: Number(bodySafe.episode) || 1,
-      title: "",
-      year: "",
-      imdbId: "",
-    });
-    if (!fallback.ok) {
-      sendJson(res, 200, { ok: false, error: "VixSrc unreachable — no mirror" });
-      return;
-    }
-    const playUrl = `/api/player/play?u=${encodeURIComponent(fallback.url)}&r=${encodeURIComponent(fallback.referer)}`;
-    sendJson(res, 200, {
-      ok: true,
-      url: `/api/player?u=${encodeURIComponent(playUrl)}`,
-      m3u8: fallback.url,
-      referer: fallback.referer,
-      provider: "videasy",
-      kind: "hls",
-    });
+    if (await sendVixsrcMirror()) return;
+    sendJson(res, 200, { ok: false, error: "VixSrc unreachable — no mirror" });
   } catch (err) {
     console.error("[api/vixsrc] resolve failed:", err.message);
+    if (await sendVixsrcMirror()) return;
     sendJson(res, 200, { ok: false, error: err.message || "VixSrc resolve failed" });
   }
 }

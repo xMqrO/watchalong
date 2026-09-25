@@ -331,6 +331,15 @@ export const clearEmbedServerFirst = (sourceId, epKey) => {
   } catch {}
 };
 
+// On Vercel-deployed pages (*.vercel.app) some providers WAF-block their own
+// embeds by Referer (vixsrc.to rejects the *.vercel.app origin, see
+// server/api.js). There the embed can never run, so we go straight to the
+// source's server resolver which mirrors the stream instead.
+export const embedBlockedByOrigin = (sourceId) =>
+  sourceId === "vixsrc" &&
+  typeof location !== "undefined" &&
+  /\.vercel\.app$/i.test(location.hostname);
+
 // Sources that require a transparent webRequest intercept to load properly
 export const NEEDS_INTERCEPT = ["vidsrc"];
 

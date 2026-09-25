@@ -31,6 +31,7 @@ import {
   shouldServerFirstEmbed,
   markEmbedServerFirst,
   clearEmbedServerFirst,
+  embedBlockedByOrigin,
 } from "../utils/api";
 
 const EMBED_FALLBACK_TIMEOUT_MS = 12000;
@@ -409,7 +410,10 @@ export default function TVPage({
   const playerSubLang = playerSettings?.subtitleLang ?? null;
   const [showSourceMenu, setShowSourceMenu] = useState(false);
   // Derived from playerSource, computed once per render instead of 5-6× inline
-  const isAsync = useMemo(() => sourceIsAsync(playerSource), [playerSource]);
+  const isAsync = useMemo(
+    () => sourceIsAsync(playerSource) || embedBlockedByOrigin(playerSource),
+    [playerSource],
+  );
   const supportsProgress = useMemo(
     () => sourceSupportsProgress(playerSource),
     [playerSource],
@@ -1227,7 +1231,7 @@ export default function TVPage({
   // drop, relay dead) do we flip to the same source's server resolver so
   // playback always starts.
   useEffect(() => {
-    if (!playing || sourceIsAsync(playerSource) || embedFallbackActiveRef.current) return;
+    if (!playing || isAsync || embedFallbackActiveRef.current) return;
     if (resolvedPlayerUrlRef.current) return;
     const epKey = currentProgressKey;
     if (shouldServerFirstEmbed(playerSource, epKey)) return;
