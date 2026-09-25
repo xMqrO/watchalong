@@ -2255,7 +2255,7 @@ export default function TVPage({
                   title={`${title} player`}
                   allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
                   allowFullScreen
-                  referrerPolicy="no-referrer"
+                  referrerPolicy={playerSource === "vixsrc" ? "origin" : "no-referrer"}
                   onLoad={() => {
                     setWebviewLoading(false);
                     shield.onPlayerLoad();
