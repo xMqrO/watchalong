@@ -352,9 +352,14 @@ const VIXSRC_REF = `${VIXSRC_BASE}/`;
 const VIXSRC_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36";
 
-function vixFetch(url, referer = VIXSRC_REF) {
+// vixsrc.to's WAF 403s requests whose Referer names a hosting platform
+// (*.vercel.app, *.github.io) or otherwise looks automated; a request with no
+// Referer at all is served normally. So we never send one by default.
+function vixFetch(url, referer = "") {
+  const headers = { "User-Agent": VIXSRC_UA, Accept: "*/*" };
+  if (referer) headers.Referer = referer;
   return fetch(url, {
-    headers: { "User-Agent": VIXSRC_UA, Accept: "*/*", Referer: referer },
+    headers,
     redirect: "follow",
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });

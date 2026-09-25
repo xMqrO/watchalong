@@ -1218,7 +1218,7 @@ Movie not found on this source
               title={`${title} player`}
               allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
               allowFullScreen
-              referrerPolicy={playerSource === "vixsrc" ? "origin" : "no-referrer"}
+              referrerPolicy="no-referrer"
               onLoad={() => {
                 setWebviewLoading(false);
                 embedLoadFiredRef.current = true;
