@@ -24,7 +24,6 @@ import {
   shouldServerFirstEmbed,
   markEmbedServerFirst,
   clearEmbedServerFirst,
-  embedBlockedByOrigin,
 } from "../utils/api";
 import {
   PlayIcon,
@@ -140,12 +139,8 @@ export default function MoviePage({
   // back to that same source's server resolver (set by the iframe onError).
   const [embedFallbackActive, setEmbedFallbackActive] = useState(false);
   const embedFallbackActiveRef = useRef(false);
-  // True when the source must be resolved server-side: it is async natively,
-  // or its embed is WAF-blocked on the deployed *.vercel.app origin.
-  const isAsync = useMemo(
-    () => sourceIsAsync(playerSource) || embedBlockedByOrigin(playerSource),
-    [playerSource],
-  );
+  // True when the source must be resolved server-side (async sources).
+  const isAsync = useMemo(() => sourceIsAsync(playerSource), [playerSource]);
   // Set when a real OnVid playback read comes back (proves the embed actually
   // started streaming); used to cancel the embed → server failover timer.
   const embeddingProofRef = useRef(false);

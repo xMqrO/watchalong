@@ -296,7 +296,6 @@ async function encPostRaw(url, headers = {}) {
 }
 
 export const PROVIDER_DEFS = {
-  vixsrc: { label: "VixSrc", clean: true },
   vidsrc: { label: "VidSrc", clean: true },
   videasy: { label: "Videasy", clean: true },
   vidlink: { label: "VidLink", clean: true },
@@ -343,9 +342,6 @@ export async function resolveProviderStream({
 }) {
   const def = PROVIDER_DEFS[provider];
   if (!def) return { ok: false, error: "Unknown provider" };
-  if (provider === "vixsrc") {
-    return { ok: false, error: "Uses dedicated resolver" };
-  }
   const base = { type, id, season, episode, title, year, imdbId };
   try {
     let out = null;

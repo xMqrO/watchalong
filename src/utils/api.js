@@ -125,7 +125,6 @@ export const tmdbFetch = async (path, apiKey) => {
 // https://www.videasy.to/docs
 // https://vsembed.su/api/
 // https://www.vidking.net/#documentation
-// https://vixsrc.to/ (movie: /movie/{id}, tv: /tv/{id}/{season}/{episode})
 // https://vidfast.vc/ (movie: /movie/{id}?autoPlay=true, tv: /tv/{id}/{s}/{e}?autoPlay=true)
 // https://vidlink.pro/ (movie: /movie/{tmdbId}, tv: /tv/{tmdbId}/{season}/{episode})
 
@@ -133,26 +132,10 @@ export const tmdbFetch = async (path, apiKey) => {
 // Every source is embed-first (`async: false`): the provider page is rendered
 // directly in the player iframe, so playback happens in the user's browser and
 // the CDNs see the user's own (unblocked) IP. `serverResolved: true` flags that
-// the same source ALSO has a validated server-side resolver (/api/player/resolve
-// or /api/vixsrc/resolve) used as an automatic fallback when the embed fails —
-// e.g. a WAF/rate-limit that only blocks server IPs, or a flaky embed host.
+// the same source ALSO has a validated server-side resolver (/api/player/resolve)
+// used as an automatic fallback when the embed fails — e.g. a WAF/rate-limit
+// that only blocks server IPs, or a flaky embed host.
 export const PLAYER_SOURCES = [
-  {
-    id: "vixsrc",
-    label: "VixSrc",
-    tag: null,
-    note: null,
-    supportsProgress: true,
-    async: false,
-    serverResolved: true,
-    clean: true, // dedicated resolver + uBO-stripped playlist
-    colorParam: null,
-    langParam: null,
-    params: {},
-    movieUrl: (id) => `https://vixsrc.to/movie/${id}`,
-    tvUrl: (id, season, ep) =>
-      `https://vixsrc.to/tv/${id}/${season}/${ep}`,
-  },
   {
     id: "videasy",
     label: "Videasy",
@@ -330,13 +313,6 @@ export const clearEmbedServerFirst = (sourceId, epKey) => {
     localStorage.setItem(EMBED_SERVER_FIRST_KEY, JSON.stringify(map));
   } catch {}
 };
-
-// Some provider hosts (vixsrc.to) sit behind a WAF that 403s requests carrying a
-// hosting-platform Referer, so we hide ours: the embed request goes out with
-// referrerPolicy="no-referrer" and the page origin never leaks. The embed is
-// still tried first everywhere (localhost, Vercel, GitHub Pages); the server
-// resolver only kicks in as an automatic fallback when the embed itself fails.
-export const embedBlockedByOrigin = () => false;
 
 // Sources that require a transparent webRequest intercept to load properly
 export const NEEDS_INTERCEPT = ["vidsrc"];
@@ -550,7 +526,7 @@ export const isAnimeContent = (item, details) => {
 };
 
 // Default source: the reliable, clean, server-resolved one.
-export const NON_ANIME_DEFAULT_SOURCE = "vixsrc";
+export const NON_ANIME_DEFAULT_SOURCE = "vidlink";
 
 // ── Episode Group fetch (localStorage + in-memory cache, 7-day TTL) ─────────
 // Episode groups almost never change -> cache aggressively across sessions.

@@ -31,7 +31,6 @@ import {
   shouldServerFirstEmbed,
   markEmbedServerFirst,
   clearEmbedServerFirst,
-  embedBlockedByOrigin,
 } from "../utils/api";
 
 const EMBED_FALLBACK_TIMEOUT_MS = 12000;
@@ -410,10 +409,7 @@ export default function TVPage({
   const playerSubLang = playerSettings?.subtitleLang ?? null;
   const [showSourceMenu, setShowSourceMenu] = useState(false);
   // Derived from playerSource, computed once per render instead of 5-6× inline
-  const isAsync = useMemo(
-    () => sourceIsAsync(playerSource) || embedBlockedByOrigin(playerSource),
-    [playerSource],
-  );
+  const isAsync = useMemo(() => sourceIsAsync(playerSource), [playerSource]);
   const supportsProgress = useMemo(
     () => sourceSupportsProgress(playerSource),
     [playerSource],
