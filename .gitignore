@@ -9,3 +9,6 @@ server/config.json
 *.bak
 desktop/release/
 desktop/node_modules/
+
+.vercel
+.env*

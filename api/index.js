@@ -1,8 +1,6 @@
-// Vercel catch-all serverless function for /api/*.
-// Zero-config mount (api/[...].js) preserves the original URL, so
-// handleApiRequest sees exact paths like "/api/tmdb/search/multi?query=x".
-// Reuses the existing Node-style router from server/api.js.
-// Secrets come from Vercel env vars: TMDB_TOKEN (required), ALLANIME_AES_KEY (optional).
+// Vercel API entrypoint for /api/*.
+// Mounted via vercel.json rewrite: { "source": "/api/:path*", "destination": "/api/index" }.
+// Re-uses the Node-style router from server/api.js.
 
 import { handleApiRequest } from "../server/api.js";
 
