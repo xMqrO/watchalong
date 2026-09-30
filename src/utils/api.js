@@ -638,6 +638,9 @@ export const sourceProgressViaFrames = (sourceId) =>
 export const sourceIsAsync = (sourceId) =>
   PLAYER_SOURCES.find((s) => s.id === sourceId)?.async ?? false;
 
+export const sourceIsServerResolved = (sourceId) =>
+  PLAYER_SOURCES.find((s) => s.id === sourceId)?.serverResolved ?? false;
+
 // Sources embed from the browser by default; "next source" walks the full list.
 export const getNextSource = (currentId) => {
   const all = PLAYER_SOURCES.map((s) => s.id);
@@ -645,6 +648,20 @@ export const getNextSource = (currentId) => {
   const idx = all.indexOf(currentId);
   if (idx < 0) return all[0];
   return all[(idx + 1) % all.length];
+};
+
+// Auto-failover only walks server-resolved providers. When a provider's server
+// resolver gives up we never want to fall into a video that only "works" as a
+// dead browser embed (which can stall for minutes before ever failing over).
+// Reaching the next server-resolved source keeps the chain fast and reliable.
+export const getNextServerResolved = (currentId) => {
+  const resolvable = PLAYER_SOURCES.filter((s) => s.serverResolved).map(
+    (s) => s.id,
+  );
+  if (resolvable.length === 0) return getNextSource(currentId);
+  const idx = resolvable.indexOf(currentId);
+  if (idx < 0) return resolvable[0];
+  return resolvable[(idx + 1) % resolvable.length];
 };
 
 // ── Embed → server-first preference ───────────────────────────────────────────
@@ -897,8 +914,11 @@ export const isAnimeContent = (item, details) => {
   return hasAnimation && (lang === "ja" || countries.includes("JP"));
 };
 
-// Default source: the reliable, clean, server-resolved one.
-export const NON_ANIME_DEFAULT_SOURCE = "vidlink";
+// Default source: the reliable, clean, server-resolved one. vidlink's embed is
+// currently dead server-side (vidlink.pro api/b returns null), so default to
+// vidfast whose HLS resolver is live. Failover still walks all server-resolved
+// sources if this one goes down.
+export const NON_ANIME_DEFAULT_SOURCE = "vidfast";
 
 // ── Episode Group fetch (localStorage + in-memory cache, 7-day TTL) ─────────
 // Episode groups almost never change -> cache aggressively across sessions.

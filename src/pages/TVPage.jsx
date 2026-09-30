@@ -27,13 +27,17 @@ import {
   isAnimeContent,
   NON_ANIME_DEFAULT_SOURCE,
   NEEDS_INTERCEPT,
-  getNextSource,
+  getNextServerResolved,
+  sourceIsServerResolved,
   shouldServerFirstEmbed,
   markEmbedServerFirst,
   clearEmbedServerFirst,
 } from "../utils/api";
 
 const EMBED_FALLBACK_TIMEOUT_MS = 12000;
+// How long to give a server-resolved embed to show real playback (OnVid proof)
+// after its page has loaded before we stop trusting it and use the resolver.
+const EMBED_PROOF_TIMEOUT_MS = 15000;
 
 import {
   BookmarkIcon,
@@ -51,6 +55,7 @@ import {
 } from "../components/Icons";
 import DownloadModal from "../components/DownloadModal";
 import TrailerModal from "../components/TrailerModal";
+import SourceSelector from "../components/SourceSelector";
 import {
   storage,
   STORAGE_KEYS,
@@ -781,11 +786,17 @@ export default function TVPage({
             setResolvedPlayerUrl(res.url);
           }
         } else {
-          // AllManga doesn't have this episode → switch to the next source
-          // automatically and remember the choice for next time.
-          const next = getNextSource(playerSource);
+          // AllManga doesn't have this episode → switch to the next
+          // server-resolved source automatically and remember the choice for
+          // next time. Server-resolved sources are the only ones our resolver
+          // can actually reach, so skipping embed-only providers keeps the
+          // failover chain fast (no 12s embed crawl per source).
+          const next = getNextServerResolved(playerSource);
           if (next) {
             setFailoverSource(epKey, next);
+            // Keep the chain in server-first mode so the next source resolves
+            // directly instead of re-trying its (likely dead) embed.
+            markEmbedServerFirst(next, epKey);
             setM3u8Url(null);
             setInterceptedSubs([]);
             resolvedPlayerUrlRef.current = null;
@@ -1225,24 +1236,53 @@ export default function TVPage({
   // fires the iframe load event quickly (ads, WAF bodies and all). Only when
   // BOTH the load event and the error event stay silent (DNS hang, connection
   // drop, relay dead) do we flip to the same source's server resolver so
-  // playback always starts.
+  // playback always starts. For server-resolved sources the load event alone
+  // is NOT enough: the provider page can load while the stream behind it is
+  // dead (e.g. VidLink returning an empty player). So we also require a real
+  // playback proof within a grace window before trusting the embed.
   useEffect(() => {
     if (!playing || isAsync || embedFallbackActiveRef.current) return;
     if (resolvedPlayerUrlRef.current) return;
     const epKey = currentProgressKey;
     if (shouldServerFirstEmbed(playerSource, epKey)) return;
+    const isResolvable = sourceIsServerResolved(playerSource);
     const startedAt = Date.now();
     let done = false;
     const interval = setInterval(() => {
       if (done) return;
-      if (embedLoadFiredRef.current || embeddingProofRef.current) {
+      if (embeddingProofRef.current) {
         done = true;
         clearInterval(interval);
         return;
       }
+      // Non-resolvable embed that loaded its page: that's the best signal we
+      // have, treat it as healthy and stop watching (old behaviour).
+      if (!isResolvable && embedLoadFiredRef.current) {
+        done = true;
+        clearInterval(interval);
+        return;
+      }
+      // Never loaded at all (DNS hang / relay dead) → flip to server resolver.
       if (Date.now() - startedAt > EMBED_FALLBACK_TIMEOUT_MS && !resolvedPlayerUrlRef.current) {
         done = true;
         clearInterval(interval);
+        embedFallbackActiveRef.current = true;
+        setEmbedFallbackActive(true);
+        return;
+      }
+      // Server-resolved source whose page loaded but has no playback proof:
+      // the provider can serve a page with a dead stream behind it (e.g. a
+      // VidLink player with no stream) — flip to the resolver instead of
+      // letting the user stare at an empty player.
+      if (
+        isResolvable &&
+        embedLoadFiredRef.current &&
+        Date.now() - startedAt > EMBED_PROOF_TIMEOUT_MS &&
+        !resolvedPlayerUrlRef.current
+      ) {
+        done = true;
+        clearInterval(interval);
+        markEmbedServerFirst(playerSource, epKey);
         embedFallbackActiveRef.current = true;
         setEmbedFallbackActive(true);
       }
@@ -2384,59 +2424,49 @@ Episode not found on this source
                     </button>
                   )}
                 </div>
-                {showSourceMenu && menuPos && (
-                  <div
-                    className="source-dropdown source-dropdown--fixed"
-                    style={{ top: menuPos.top, left: menuPos.left }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {PLAYER_SOURCES.map((src) => (
-                      <button
-                        key={src.id}
-                        className={
-                          "source-dropdown__item" +
-                          (playerSource === src.id
-                            ? " source-dropdown__item--active"
-                            : "")
-                        }
-                        onClick={() => {
-                          setShowSourceMenu(false);
-                          if (src.id === playerSource) return;
-                          // Manual selection wins over auto-failover
-                          if (selectedEp) {
-                            clearFailoverSource(
-                              `tv_${item.id}_s${selectedSeason}_e${selectedEp.episode_number}_${dubMode}`,
-                            );
-                            clearEmbedServerFirst(
-                              src.id,
-                              `tv_${item.id}_s${selectedSeason}_e${selectedEp.episode_number}_${dubMode}`,
-                            );
-                          }
-                          setPlayerSource(src.id);
-                          storage.set(STORAGE_KEYS.PLAYER_SOURCE, src.id);
-                          setM3u8Url(null);
-                          setInterceptedSubs([]);
-                          resolvedPlayerUrlRef.current = null;
-                          setResolvedPlayerUrl(null);
-                          resolvingUrlRef.current = false;
-                          setResolvingUrl(false);
-                          setResolveError(null);
-                        }}
-                      >
-                        <span>{src.label}</span>
-                        {src.tag && (
-                          <span className="source-dropdown__tag">
-                            {src.tag}
-                          </span>
-                        )}
-                        {src.note && (
-                          <span className="source-dropdown__note">
-                            {src.note}
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
+                {showSourceMenu && (
+                  <SourceSelector
+                    playerSource={playerSource}
+                    onSelect={(id) => {
+                      if (selectedEp) {
+                        clearFailoverSource(
+                          `tv_${item.id}_s${selectedSeason}_e${selectedEp.episode_number}_${dubMode}`,
+                        );
+                        clearEmbedServerFirst(
+                          id,
+                          `tv_${item.id}_s${selectedSeason}_e${selectedEp.episode_number}_${dubMode}`,
+                        );
+                      }
+                      setPlayerSource(id);
+                      storage.set(STORAGE_KEYS.PLAYER_SOURCE, id);
+                      setM3u8Url(null);
+                      setInterceptedSubs([]);
+                      resolvedPlayerUrlRef.current = null;
+                      setResolvedPlayerUrl(null);
+                      resolvingUrlRef.current = false;
+                      setResolvingUrl(false);
+                      setResolveError(null);
+                    }}
+                    onClose={() => setShowSourceMenu(false)}
+                    isMovie={false}
+                    itemId={item.id}
+                    dubMode={dubMode}
+                    clearFailover={(id) =>
+                      selectedEp
+                        ? clearFailoverSource(
+                            `tv_${item.id}_s${selectedSeason}_e${selectedEp.episode_number}_${dubMode}`,
+                          )
+                        : () => {}
+                    }
+                    clearEmbedFirst={(id) =>
+                      selectedEp
+                        ? clearEmbedServerFirst(
+                            id,
+                            `tv_${item.id}_s${selectedSeason}_e${selectedEp.episode_number}_${dubMode}`,
+                          )
+                        : () => {}
+                    }
+                  />
                 )}
                 <button
                   className="player-overlay-btn"

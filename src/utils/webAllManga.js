@@ -28,6 +28,7 @@ async function resolveGenericProvider(provider, { id, isMovie, seasonNumber, epi
         year,
         imdbId,
       }),
+      signal: AbortSignal.timeout(20000),
     });
     if (!res.ok) return { ok: false, error: `API ${res.status}` };
     const data = await res.json();

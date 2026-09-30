@@ -4047,4 +4047,196 @@ body.compact-mode .card-year {
 
 .episode-check-item:hover {
     color: var(--text) !important;
+  }
+
+/* ── Source Selector Panel (square scrollable) ─────────────────────────────── */
+.source-panel {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 340px;
+  height: 420px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow:
+    0 24px 48px color-mix(in srgb, var(--bg) 70%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--border) 50%, transparent);
+  display: flex;
+  flex-direction: column;
+  z-index: 10000;
+  animation: sourcePanelFadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+  overflow: hidden;
+}
+
+@keyframes sourcePanelFadeIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+.source-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface2) 90%, var(--bg));
+}
+
+.source-panel__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+.source-panel__close {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text3);
+  font-size: 18px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.source-panel__close:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+
+.source-panel__content {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.source-panel__list {
+  height: 100%;
+  overflow-y: auto;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.source-panel__list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.source-panel__list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.source-panel__list::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+  border: 2px solid var(--surface2);
+}
+
+.source-panel__list::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text) 30%, var(--border));
+}
+
+.source-panel__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 14px 16px;
+  background: var(--bg);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--text2);
+  text-align: left;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    border-color 0.12s,
+    color 0.12s,
+    transform 0.08s;
+  gap: 12px;
+}
+
+.source-panel__item:hover {
+  background: color-mix(in srgb, var(--text) 5%, var(--bg));
+  color: var(--text);
+  transform: translateX(2px);
+}
+
+.source-panel__item:active {
+  transform: scale(0.99);
+}
+
+.source-panel__item-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.source-panel__tag {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(139, 92, 246, 0.18);
+  color: #a78bfa;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  text-transform: uppercase;
+}
+
+.source-panel__check {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  border-radius: 50%;
+  transition: background 0.12s, color 0.12s;
+}
+
+.source-panel__footer {
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface2) 90%, var(--bg));
+}
+
+.source-panel__count {
+  font-size: 12px;
+  color: var(--text3);
+  letter-spacing: 0.2px;
+}
+
+/* Active item override (applied via inline style on active item) */
+.source-panel__item[style*="rgba(229, 9, 20, 0.15)"] {
+  background: rgba(229, 9, 20, 0.15) !important;
+  border-color: var(--red) !important;
+  color: var(--red) !important;
+}
+
+.source-panel__item[style*="rgba(229, 9, 20, 0.15)"] .source-panel__check {
+  color: var(--red) !important;
 }
