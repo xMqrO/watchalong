@@ -22,6 +22,7 @@ import {
   NEEDS_INTERCEPT,
   getNextServerResolved,
   sourceIsServerResolved,
+  sourceReferrerPolicy,
   shouldServerFirstEmbed,
   markEmbedServerFirst,
   clearEmbedServerFirst,
@@ -100,7 +101,12 @@ export default function MoviePage({
   const [m3u8Url, setM3u8Url] = useState(null);
   const [interceptedSubs, setInterceptedSubs] = useState([]);
   const [playerSource, setPlayerSource] = useState(
-    () => storage.get("playerSource") || NON_ANIME_DEFAULT_SOURCE,
+    () => {
+      const stored = storage.get("playerSource");
+      const valid = PLAYER_SOURCES.some((s) => s.id === stored);
+      if (!valid && stored) storage.set(STORAGE_KEYS.PLAYER_SOURCE, NON_ANIME_DEFAULT_SOURCE);
+      return valid ? stored : NON_ANIME_DEFAULT_SOURCE;
+    },
   );
 
   // Accent colour + subtitle lang come from App-level state (via props),
@@ -149,6 +155,9 @@ export default function MoviePage({
   // Set when a real OnVid playback read comes back (proves the embed actually
   // started streaming); used to cancel the embed → server failover timer.
   const embeddingProofRef = useRef(false);
+  // True when the user explicitly picked a different source this session; we
+  // respect that choice instead of silently bouncing them back to the default.
+  const manualPickRef = useRef(false);
   // True once the embed iframe fires its load event (healthy embed); also
   // cancels the failover timer.
   const embedLoadFiredRef = useRef(false);
@@ -302,6 +311,11 @@ export default function MoviePage({
     setWebviewLoading(true); // instantly blank the player on every source/item switch
   }, [item.id, playerSource, dubMode]);
 
+  // A new movie clears any manual source choice so auto-failover works again.
+  useEffect(() => {
+    manualPickRef.current = false;
+  }, [item.id]);
+
   // Fetch AniList data for anime content
   useEffect(() => {
     let mounted = true;
@@ -395,12 +409,10 @@ export default function MoviePage({
           }
         } else {
           // AllManga doesn't have this title → switch to the next
-          // server-resolved source automatically and remember the choice for
-          // next time. Server-resolved sources are the only ones our resolver
-          // can actually reach, so skipping embed-only providers keeps the
-          // failover chain fast (no 12s embed crawl per source).
+          // server-resolved source automatically (unless the user explicitly
+          // chose this source — then show the error instead of bouncing them).
           const next = getNextServerResolved(playerSource);
-          if (next) {
+          if (next && !manualPickRef.current) {
             setFailoverSource(epKey, next);
             // Keep the chain in server-first mode so the next source resolves
             // directly instead of re-trying its (likely dead) embed.
@@ -499,23 +511,24 @@ export default function MoviePage({
     return () => window.electron.offM3u8Found(handler);
   }, []);
 
-  // Close source dropdown on scroll or click-outside
+  // Close source panel on click-outside. Note: the panel renders with class
+  // `.source-panel` (see SourceSelector); clicks inside it must NOT close it —
+  // only the item's own onClick selects and closes. Scrolling (page or the
+  // panel's own list) must not close it either.
   useEffect(() => {
     if (!showSourceMenu) return;
     const close = () => setShowSourceMenu(false);
-    window.addEventListener("scroll", close, { capture: true, passive: true });
-    const handleClick = (e) => {
+    const handlePointerDown = (e) => {
       if (
         sourceRef.current?.contains(e.target) ||
-        e.target.closest(".source-dropdown")
+        e.target.closest(".source-panel")
       )
         return;
       close();
     };
-    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("mousedown", handlePointerDown);
     return () => {
-      window.removeEventListener("scroll", close, { capture: true });
-      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("mousedown", handlePointerDown);
     };
   }, [showSourceMenu]);
 
@@ -647,16 +660,20 @@ export default function MoviePage({
     const reader = createOnVidReader(iframe);
     browserReaderRef.current = reader;
     browserResumeSeekedRef.current = false;
-    // Anchor the wall-clock fallback to the saved position so resuming a
-    // movie never restarts progress from 0 (fixes non-OnVid sources).
+    // Anchor the wall-clock fallback to the saved position (minus the 10s
+    // lookback). `fallbackBaseAtRef` stays 0 (frozen) until the player iframe
+    // actually loads below, so iframe/buffer time is never counted as
+    // playback — otherwise the estimate jumps forward of the resume point.
     const savedForBase = Number(storage.get("dlTime_" + progressKey) || 0);
-    fallbackBaseSecRef.current = savedForBase;
-    fallbackBaseAtRef.current = Date.now();
+    fallbackBaseSecRef.current =
+      savedForBase > 0 ? Math.max(0, savedForBase - 10) : savedForBase;
+    fallbackBaseAtRef.current = 0;
 
     let resumeTimer = null;
     if (reader) {
-      const savedSeconds = savedForBase;
-      if (savedSeconds >= 25) {
+      const savedSeconds =
+        savedForBase > 0 ? Math.max(0, savedForBase - 10) : 0;
+      if (savedForBase >= 25) {
         resumeTimer = setTimeout(() => {
           let attempts = 0;
           const attemptSeek = () => {
@@ -707,9 +724,16 @@ export default function MoviePage({
               embeddingProofRef.current = true;
               const ct = exact.currentTime;
               lastKnownTimeRef.current = ct;
-              // Re-anchor the wall-clock estimate to the real read
-              fallbackBaseSecRef.current = ct;
-              fallbackBaseAtRef.current = Date.now();
+              // Re-anchor the wall-clock estimate to the real read — and
+              // unfreeze the wall-clock timer on first real read so buffering
+              // time is never counted as playback.
+              if (fallbackBaseAtRef.current === 0) {
+                fallbackBaseSecRef.current = ct;
+                fallbackBaseAtRef.current = Date.now();
+              } else {
+                fallbackBaseSecRef.current = ct;
+                fallbackBaseAtRef.current = Date.now();
+              }
               const p = Math.floor((ct / exact.duration) * 100);
               saveProgressRef.current(progressKey, Math.min(p, 100));
               storage.set("dlTime_" + progressKey, Math.floor(ct));
@@ -724,14 +748,17 @@ export default function MoviePage({
               }
             } else if (!exact) {
               // Fallback: estimate position = last trusted position + wall
-              // time since it was observed. Never starts from 0 on resume.
-              if (!fallbackBaseAtRef.current) {
-                fallbackBaseSecRef.current = 0;
-                fallbackBaseAtRef.current = Date.now();
-              }
+              // time since it was observed. While `fallbackBaseAtRef` is 0 the
+              // player iframe is still loading, so we hold at the resume
+              // anchor (no advancing) instead of counting buffer time.
               const estimated =
-                fallbackBaseSecRef.current +
-                Math.max(0, (Date.now() - fallbackBaseAtRef.current) / 1000);
+                fallbackBaseAtRef.current === 0
+                  ? fallbackBaseSecRef.current
+                  : fallbackBaseSecRef.current +
+                    Math.max(
+                      0,
+                      (Date.now() - fallbackBaseAtRef.current) / 1000,
+                    );
               const totalSecs = d?.runtime ? d.runtime * 60 : 0;
               lastKnownTimeRef.current = estimated;
               if (totalSecs > 0) {
@@ -944,6 +971,18 @@ export default function MoviePage({
 
   // ── Redirect & Popup Shield ───────────────────────────────────────────────
   const shield = useRedirectShield();
+  // Resume the saved position by baking it into the embed URL (`?startAt=` for
+  // hosts that support it). On the website this is the only reliable way to
+  // resume: the OnVid postMessage seek is not answered by the current embeds.
+  // We rewind 10s from the saved spot so the user can remember what was
+  // happening. Memoized on source/item so live progress saves never change the
+  // iframe src mid-playback (that would reload the player).
+  const RESUME_LOOKBACK_SEC = 10;
+  const resumeSeconds = useMemo(() => {
+    const saved = Number(storage.get("dlTime_" + progressKey) || 0);
+    return saved > 0 ? Math.max(0, saved - RESUME_LOOKBACK_SEC) : 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playerSource, item.id]);
   const realPlayerSrc = isAsync || embedFallbackActive
     ? resolvedPlayerUrl || "about:blank"
     : getSourceUrl(
@@ -955,6 +994,7 @@ export default function MoviePage({
         {},
         playerAccentColor,
         playerSubLang,
+        resumeSeconds,
       );
   useEffect(() => {
     if (shield.blocked) return;
@@ -1253,11 +1293,18 @@ Movie not found on this source
               title={`${title} player`}
               allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
               allowFullScreen
-              referrerPolicy="no-referrer"
+              referrerPolicy={
+                isAsync ? "no-referrer" : sourceReferrerPolicy(playerSource)
+              }
               onLoad={() => {
                 setWebviewLoading(false);
                 embedLoadFiredRef.current = true;
                 shield.onPlayerLoad();
+                // Unfreeze the wall-clock fallback anchor now that the player
+                // iframe has loaded, so buffer/load time isn't counted as
+                // watched (keeps the 10s rewind honest).
+                if (fallbackBaseAtRef.current === 0)
+                  fallbackBaseAtRef.current = Date.now();
                 if (!isAsync) {
                   clearEmbedServerFirst(
                     playerSource,
@@ -1334,6 +1381,7 @@ Movie not found on this source
                   clearFailoverSource(`movie_${item.id}_${dubMode}`);
                   clearEmbedServerFirst(id, `movie_${item.id}_${dubMode}`);
                   setPlayerSource(id);
+                  manualPickRef.current = true;
                   storage.set(STORAGE_KEYS.PLAYER_SOURCE, id);
                   setM3u8Url(null);
                   setInterceptedSubs([]);

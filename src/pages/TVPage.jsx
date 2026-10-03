@@ -29,6 +29,7 @@ import {
   NEEDS_INTERCEPT,
   getNextServerResolved,
   sourceIsServerResolved,
+  sourceReferrerPolicy,
   shouldServerFirstEmbed,
   markEmbedServerFirst,
   clearEmbedServerFirst,
@@ -393,9 +394,12 @@ export default function TVPage({
   const [details, setDetails] = useState(null);
   const [seasonData, setSeasonData] = useState(null);
   const [failedSeasons, setFailedSeasons] = useState(() => new Set()); // season numbers which give 404 on TMDB
-  const [selectedSeason, setSelectedSeason] = useState(() =>
-    item.season != null ? Number(item.season) : 1,
-  );
+  const [selectedSeason, setSelectedSeason] = useState(() => {
+    if (item.season != null) return Number(item.season);
+    // Fresh reopen (no deep link): restore the last watched season.
+    const stored = storage.get(`lastEp_tv_${item.id}`);
+    return stored?.season != null ? Number(stored.season) : 1;
+  });
   const [selectedEp, setSelectedEp] = useState(null);
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -406,7 +410,12 @@ export default function TVPage({
   const [m3u8Url, setM3u8Url] = useState(null);
   const [interceptedSubs, setInterceptedSubs] = useState([]);
   const [playerSource, setPlayerSource] = useState(
-    () => storage.get("playerSource") || NON_ANIME_DEFAULT_SOURCE,
+    () => {
+      const stored = storage.get("playerSource");
+      const valid = PLAYER_SOURCES.some((s) => s.id === stored);
+      if (!valid && stored) storage.set(STORAGE_KEYS.PLAYER_SOURCE, NON_ANIME_DEFAULT_SOURCE);
+      return valid ? stored : NON_ANIME_DEFAULT_SOURCE;
+    },
   );
   // Accent colour + subtitle lang come from App-level state (via props),
   // so they are always fresh after Settings save without any extra storage reads.
@@ -443,6 +452,9 @@ export default function TVPage({
   // True once the embed iframe fires its load event (healthy embed); also
   // cancels the failover timer.
   const embedLoadFiredRef = useRef(false);
+  // True when the user explicitly picked a different source this session; we
+  // respect that choice instead of silently bouncing them back to the default.
+  const manualPickRef = useRef(false);
   const [anilistData, setAnilistData] = useState(null);
   const [anilistSeasons, setAnilistSeasons] = useState(null); // [{seasonNum, title, episodes, year}]
   const [anilistLoading, setAnilistLoading] = useState(false);
@@ -533,23 +545,32 @@ export default function TVPage({
         setDetails(d);
         // Only fall back when no specific season was requested
         if (item.season == null) {
-          const validSeasons = (d.seasons || []).filter(
-            (s) => s.season_number > 0,
+          // Fresh reopen: keep the restored last-watched season (don't jump to
+          // an earlier "unwatched" season before the restore kicks in).
+          const stored = storage.get(`lastEp_tv_${item.id}`);
+          const restoredSeason = stored?.season != null ? Number(stored.season) : null;
+          const prefersRestore = restoredSeason != null && (d.seasons || []).some(
+            (s) => s.season_number === restoredSeason,
           );
-          // Find the lowest season that isn't fully watched
-          const incomplete = validSeasons.find((s) => {
-            const count = s.episode_count || 0;
-            if (!count) return false;
-            for (let i = 1; i <= count; i++) {
-              if (
-                !watchedRef.current?.[`tv_${item.id}_s${s.season_number}e${i}`]
-              )
-                return true;
-            }
-            return false;
-          });
-          const target = incomplete || validSeasons[0] || d.seasons?.[0];
-          if (target) setSelectedSeason(target.season_number);
+          if (!prefersRestore) {
+            const validSeasons = (d.seasons || []).filter(
+              (s) => s.season_number > 0,
+            );
+            // Find the lowest season that isn't fully watched
+            const incomplete = validSeasons.find((s) => {
+              const count = s.episode_count || 0;
+              if (!count) return false;
+              for (let i = 1; i <= count; i++) {
+                if (
+                  !watchedRef.current?.[`tv_${item.id}_s${s.season_number}e${i}`]
+                )
+                  return true;
+              }
+              return false;
+            });
+            const target = incomplete || validSeasons[0] || d.seasons?.[0];
+            if (target) setSelectedSeason(target.season_number);
+          }
         }
       })
       .catch(() => {
@@ -680,6 +701,11 @@ export default function TVPage({
     dubMode,
   ]);
 
+  // A new show clears any manual source choice so auto-failover works again.
+  useEffect(() => {
+    manualPickRef.current = false;
+  }, [item.id]);
+
   // Fetch AniList metadata + auto-set anime source
   useEffect(() => {
     let mounted = true;
@@ -787,12 +813,10 @@ export default function TVPage({
           }
         } else {
           // AllManga doesn't have this episode → switch to the next
-          // server-resolved source automatically and remember the choice for
-          // next time. Server-resolved sources are the only ones our resolver
-          // can actually reach, so skipping embed-only providers keeps the
-          // failover chain fast (no 12s embed crawl per source).
+          // server-resolved source automatically (unless the user explicitly
+          // chose this source — then show the error instead of bouncing them).
           const next = getNextServerResolved(playerSource);
-          if (next) {
+          if (next && !manualPickRef.current) {
             setFailoverSource(epKey, next);
             // Keep the chain in server-first mode so the next source resolves
             // directly instead of re-trying its (likely dead) embed.
@@ -830,23 +854,24 @@ export default function TVPage({
     return () => window.electron.offM3u8Found(handler);
   }, []);
 
-  // Close source dropdown on scroll or click-outside
+  // Close source panel on click-outside. Note: the panel renders with class
+  // `.source-panel` (see SourceSelector); clicks inside it must NOT close it —
+  // only the item's own onClick selects and closes. Scrolling (page or the
+  // panel's own list) must not close it either.
   useEffect(() => {
     if (!showSourceMenu) return;
     const close = () => setShowSourceMenu(false);
-    window.addEventListener("scroll", close, { capture: true, passive: true });
-    const handleClick = (e) => {
+    const handlePointerDown = (e) => {
       if (
         sourceRef.current?.contains(e.target) ||
-        e.target.closest(".source-dropdown")
+        e.target.closest(".source-panel")
       )
         return;
       close();
     };
-    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("mousedown", handlePointerDown);
     return () => {
-      window.removeEventListener("scroll", close, { capture: true });
-      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("mousedown", handlePointerDown);
     };
   }, [showSourceMenu]);
 
@@ -994,11 +1019,19 @@ export default function TVPage({
   const autoSelectKeyRef = useRef(null);
   const playEpisodeRef = useRef(null); // mirrored after playEpisode is defined
   useEffect(() => {
-    if (!item.episode || currentSeasonEpisodes.length === 0 || !d) return;
-    const key = `${item.id}_e${item.episode}`;
+    if (currentSeasonEpisodes.length === 0 || !d) return;
+    // Deep link (/s<n>/ep<m>) wins; otherwise restore the last-watched episode
+    // persisted by playEpisode, but only on a fresh reopen (no explicit item
+    // episode/season) so we never yank the user around mid-session.
+    const stored = item.episode == null && item.season == null
+      ? storage.get(`lastEp_tv_${item.id}`)
+      : null;
+    const targetEp =
+      item.episode != null ? Number(item.episode) : stored?.episode ?? null;
+    if (targetEp == null) return;
+    const key = `${item.id}_e${targetEp}`;
     if (autoSelectKeyRef.current === key) return; // already handled this target
-    const target = Number(item.episode);
-    const ep = currentSeasonEpisodes.find((e) => e.episode_number === target);
+    const ep = currentSeasonEpisodes.find((e) => e.episode_number === targetEp);
     if (ep) {
       autoSelectKeyRef.current = key;
       const unreleased = ep.air_date
@@ -1010,7 +1043,15 @@ export default function TVPage({
         playEpisodeRef.current?.(ep);
       }
     }
-  }, [item.id, item.episode, currentSeasonEpisodes, d, restricted]);
+  }, [
+    item.id,
+    item.episode,
+    item.season,
+    currentSeasonEpisodes,
+    d,
+    restricted,
+    selectedSeason,
+  ]);
 
   // ── Downloads lookup map: O(1) per episode instead of O(n) ───────────────
   const downloadsByEpisodeKey = useMemo(() => {
@@ -1303,19 +1344,22 @@ export default function TVPage({
     const reader = createOnVidReader(iframe);
     browserReaderRef.current = reader;
     browserResumeSeekedRef.current = false;
-    // Anchor the wall-clock fallback to the saved position so resuming an
-    // episode never restarts progress from 0 (fixes non-OnVid sources).
-    fallbackBaseSecRef.current = Number(
+    // Anchor the wall-clock fallback to the saved position (minus the 10s
+    // lookback). `fallbackBaseAtRef` stays 0 (frozen) until the player iframe
+    // actually loads below, so iframe/buffer time is never counted as
+    // playback — otherwise the estimate jumps forward of the resume point.
+    const savedForBase = Number(
       storage.get("dlTime_" + currentProgressKey) || 0,
     );
-    fallbackBaseAtRef.current = Date.now();
+    fallbackBaseSecRef.current =
+      savedForBase > 0 ? Math.max(0, savedForBase - 10) : savedForBase;
+    fallbackBaseAtRef.current = 0;
 
     let resumeTimer = null;
     if (reader) {
-      const savedSeconds = Number(
-        storage.get("dlTime_" + currentProgressKey) || 0,
-      );
-      if (savedSeconds >= 25) {
+      const savedSeconds =
+        savedForBase > 0 ? Math.max(0, savedForBase - 10) : 0;
+      if (savedForBase >= 25) {
         resumeTimer = setTimeout(() => {
           let attempts = 0;
           const attemptSeek = () => {
@@ -1439,9 +1483,13 @@ export default function TVPage({
               durationRef.current = exact.duration;
               const ct = exact.currentTime;
               lastKnownTimeRef.current = ct;
-              // Re-anchor the wall-clock estimate to the real read
-              fallbackBaseSecRef.current = ct;
-              fallbackBaseAtRef.current = Date.now();
+              if (fallbackBaseAtRef.current === 0) {
+                fallbackBaseSecRef.current = ct;
+                fallbackBaseAtRef.current = Date.now();
+              } else {
+                fallbackBaseSecRef.current = ct;
+                fallbackBaseAtRef.current = Date.now();
+              }
               const p = Math.floor((ct / exact.duration) * 100);
               saveProgressRef.current(currentProgressKey, Math.min(p, 100));
               storage.set(
@@ -1468,14 +1516,17 @@ export default function TVPage({
               }
             } else if (!exact) {
               // Fallback: estimate position = last trusted position + wall
-              // time since it was observed. Never starts from 0 on resume.
-              if (!fallbackBaseAtRef.current) {
-                fallbackBaseSecRef.current = 0;
-                fallbackBaseAtRef.current = Date.now();
-              }
+              // time since it was observed. While `fallbackBaseAtRef` is 0 the
+              // player iframe is still loading, so we hold at the resume
+              // anchor (no advancing) instead of counting buffer time.
               const estimated =
-                fallbackBaseSecRef.current +
-                Math.max(0, (Date.now() - fallbackBaseAtRef.current) / 1000);
+                fallbackBaseAtRef.current === 0
+                  ? fallbackBaseSecRef.current
+                  : fallbackBaseSecRef.current +
+                    Math.max(
+                      0,
+                      (Date.now() - fallbackBaseAtRef.current) / 1000,
+                    );
               const minutes = Number(d?.episode_run_time?.[0]) || 0;
               const durationSec = minutes > 0 ? minutes * 60 : 0;
               lastKnownTimeRef.current = estimated;
@@ -1578,7 +1629,6 @@ export default function TVPage({
           if (result && result.duration > 0) {
             durationRef.current = result.duration;
             const ct = result.currentTime;
-
             // ── Resolution-change reset detection ──────────────────────────
             // Videasy resets to 0 on quality change. We only seek back if:
             // - ct is near zero (≤5s)
@@ -1610,10 +1660,19 @@ export default function TVPage({
             // If user seeked, update ref to their chosen position immediately
             if (result.recentUserSeek && result.lastUserSeekTo !== null) {
               lastKnownTimeRef.current = result.lastUserSeekTo;
-              fallbackBaseSecRef.current = result.lastUserSeekTo;
-              fallbackBaseAtRef.current = Date.now();
+              if (fallbackBaseAtRef.current === 0) {
+                fallbackBaseSecRef.current = result.lastUserSeekTo;
+                fallbackBaseAtRef.current = Date.now();
+              } else {
+                fallbackBaseSecRef.current = result.lastUserSeekTo;
+                fallbackBaseAtRef.current = Date.now();
+              }
             } else {
               lastKnownTimeRef.current = ct;
+              if (fallbackBaseAtRef.current === 0) {
+                fallbackBaseSecRef.current = ct;
+                fallbackBaseAtRef.current = Date.now();
+              }
             }
             const p = Math.floor((ct / result.duration) * 100);
             saveProgressRef.current(currentProgressKey, Math.min(p, 100));
@@ -1786,6 +1845,11 @@ export default function TVPage({
       setResolveError(null);
       setSelectedEp(ep);
       setPlaying(true);
+      // Remember the last watched episode so a fresh reopen can restore it
+      storage.set(`lastEp_tv_${item.id}`, {
+        season: selectedSeason,
+        episode: ep.episode_number,
+      });
       onHistory({
         ...d,
         media_type: "tv",
@@ -1795,7 +1859,7 @@ export default function TVPage({
       });
       // d and selectedSeason are stable within a season view; onHistory is useCallback in App
     },
-    [d, selectedSeason, onHistory],
+    [d, selectedSeason, onHistory, item.id],
   );
   playEpisodeRef.current = playEpisode;
 
@@ -1890,6 +1954,20 @@ export default function TVPage({
 
   // ── Redirect & Popup Shield ───────────────────────────────────────────────
   const shield = useRedirectShield();
+  // Resume the saved position by baking it into the embed URL (`?startAt=` for
+  // hosts that support it). On the website this is the only reliable way to
+  // resume: the OnVid postMessage seek is not answered by the current embeds.
+  // We rewind 10s from the saved spot so the user can remember what was
+  // happening. Memoized on source/item/episode so live progress saves never
+  // change the iframe src mid-playback (that would reload the player).
+  const RESUME_LOOKBACK_SEC = 10;
+  const resumeSeconds = useMemo(() => {
+    const saved = currentProgressKey
+      ? Number(storage.get("dlTime_" + currentProgressKey) || 0)
+      : 0;
+    return saved > 0 ? Math.max(0, saved - RESUME_LOOKBACK_SEC) : 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playerSource, item.id, playerEp.season, playerEp.episode]);
   const realPlayerSrc = isAsync || embedFallbackActive
     ? resolvedPlayerUrl || "about:blank"
     : getSourceUrl(
@@ -1901,6 +1979,7 @@ export default function TVPage({
         {},
         playerAccentColor,
         playerSubLang,
+        resumeSeconds,
       );
   useEffect(() => {
     if (shield.blocked) return;
@@ -2346,11 +2425,18 @@ Episode not found on this source
                   title={`${title} player`}
                   allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
                   allowFullScreen
-                  referrerPolicy="no-referrer"
+                  referrerPolicy={
+                  isAsync ? "no-referrer" : sourceReferrerPolicy(playerSource)
+                }
                   onLoad={() => {
                     setWebviewLoading(false);
                     embedLoadFiredRef.current = true;
                     shield.onPlayerLoad();
+                    // Unfreeze the wall-clock fallback anchor now that the
+                    // player iframe has loaded, so buffer/load time isn't
+                    // counted as watched (keeps the 10s rewind honest).
+                    if (fallbackBaseAtRef.current === 0)
+                      fallbackBaseAtRef.current = Date.now();
                     if (!isAsync && selectedEp) {
                       clearEmbedServerFirst(
                         playerSource,
@@ -2438,6 +2524,7 @@ Episode not found on this source
                         );
                       }
                       setPlayerSource(id);
+                      manualPickRef.current = true;
                       storage.set(STORAGE_KEYS.PLAYER_SOURCE, id);
                       setM3u8Url(null);
                       setInterceptedSubs([]);

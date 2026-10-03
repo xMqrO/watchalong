@@ -5,7 +5,7 @@
 
 // Providers whose streams the server resolves to a clean m3u8/mp4. If a
 // provider gives up, the page auto-fails over to the next source.
-const SERVER_RESOLVED = ["vidsrc", "videasy", "vidking", "vidfast", "vidlink"];
+const SERVER_RESOLVED = ["vidfast"];
 
 export async function resolveAllManga(args = {}) {
   const { playerSource, ...rest } = args;

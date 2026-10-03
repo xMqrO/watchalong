@@ -1,5 +1,7 @@
 // localStorage-based persistence (works in both Vite dev and prod)
 
+import { PLAYER_SOURCES } from "./api";
+
 const PREFIX = "watchalong_";
 
 export const storage = {
@@ -119,7 +121,15 @@ const FAILOVER_CACHE_MAX = 200;
 
 export const getFailoverSource = (epKey) => {
   const cache = storage.get(STORAGE_KEYS.SOURCE_FAILOVER_CACHE) || {};
-  return cache[epKey]?.sourceId || null;
+  const id = cache[epKey]?.sourceId || null;
+  // A cached source may be stale after the source list changed; drop it so it
+  // can't silently redirect the player to a removed id.
+  if (id && !PLAYER_SOURCES.some((s) => s.id === id)) {
+    delete cache[epKey];
+    storage.set(STORAGE_KEYS.SOURCE_FAILOVER_CACHE, cache);
+    return null;
+  }
+  return id;
 };
 
 export const setFailoverSource = (epKey, sourceId) => {
