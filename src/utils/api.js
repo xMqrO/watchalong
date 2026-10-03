@@ -145,7 +145,7 @@ export const tmdbFetch = async (path, apiKey) => {
 // the same source ALSO has a validated server-side resolver (/api/player/resolve)
 // used as an automatic fallback when the embed fails — e.g. a WAF/rate-limit
 // that only blocks server IPs, or a flaky embed host.
-export const PLAYER_SOURCES = [
+const ALL_PLAYER_SOURCES = [
   {
     id: "vidfast",
     label: "VidFast",
@@ -401,6 +401,21 @@ params: {},
       `https://vidsrc.pm/embed/tv/${id}/${season}/${ep}`,
   },
 ];
+
+// VixSrc cannot play on the Vercel-deployed site. vixsrc.to WAF-blocks
+// *.vercel.app as a Referer (so the browser embed always gets a 403 page) and
+// also blocks Vercel's server IPs (so proxying it server-side fails too — the
+// shared Videasy mirror we used to fall back on is currently 502 as well).
+// From localhost/desktop the real embed works, so VixSrc is only dropped on a
+// hosted origin. Every consumer reads this filtered list, so the menu, the
+// "next source" walk and the stored-source validation all agree.
+const HOSTED_ORIGIN =
+  typeof location !== "undefined" && /\.vercel\.app$/i.test(location.hostname);
+
+export const PLAYER_SOURCES = ALL_PLAYER_SOURCES.filter(
+  (s) => !(s.id === "vixsrc" && HOSTED_ORIGIN),
+);
+
 export const getSourceUrl = (
   sourceId,
   type,
