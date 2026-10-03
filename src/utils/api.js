@@ -121,9 +121,18 @@ export const tmdbFetch = async (path, apiKey) => {
   return data;
 };
 
+// Absolute origin for the /api/vix reverse proxy (see server/api.js). Needs to
+// be absolute because getSourceUrl() parses it with `new URL()`, and the
+// desktop build serves the app from the local API server rather than a file://
+// URL, so location.origin is correct in both environments.
+const vixProxyBase = () =>
+  `${typeof location !== "undefined" ? location.origin : ""}/api/vix`;
+
 // Documentation:
 // https://vidfast.vc/ (movie: /movie/{id}?autoPlay=true, tv: /tv/{id}/{s}/{e}?autoPlay=true)
-// https://vixsrc.to/ (movie: /movie/{id}, tv: /tv/{id}/{season}/{episode})
+// https://vixsrc.to/ (movie: /movie/{id}, tv: /tv/{id}/{season}/{episode}) — loaded
+//   through our /api/vix proxy: their Cloudflare WAF allowlists embedder
+//   domains by Referer and blocks everything else inside an iframe.
 // https://www.2embed.cc/ (movie: /embed/movie/{id}, /embed/{id}; tv: /embed/tv/{id}/{s}/{e}, /embedtv/{id}&s={s}&e={e})
 // https://hdm.to/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
 // https://v2.vidsrc.me/ (movie: /embed/movie/{id}, tv: /embed/tv/{id}/{season}/{episode})
@@ -176,13 +185,18 @@ params: {
     colorParam: null,
     langParam: null,
     params: {},
-    // VixSrc's player refuses to run with referrerpolicy="no-referrer" and
-    // requires "origin".
+    // VixSrc sits behind a Cloudflare WAF that 403s iframe navigations whose
+    // Referer isn't on its allowlist. Referer/Sec-Fetch-Dest are forbidden
+    // headers, so the browser can't be made to look allowlisted — the only way
+    // in is to move the hop server-side and load our own /api/vix prefix.
+    // "origin" still matters: vixsrc's own script refuses to run when it is
+    // framed with an empty document.referrer. Our server drops the referrer
+    // before the real upstream hop, so this value never reaches their WAF.
     referrerPolicy: "origin",
     startParam: "startAt",
-    movieUrl: (id) => `https://vixsrc.to/movie/${id}`,
-    tvUrl: (id, season, ep) =>
-      `https://vixsrc.to/tv/${id}/${season}/${ep}`,
+    proxied: true,
+    movieUrl: (id) => `${vixProxyBase()}/movie/${id}`,
+    tvUrl: (id, season, ep) => `${vixProxyBase()}/tv/${id}/${season}/${ep}`,
   },
   {
     id: "twoembedcc",
