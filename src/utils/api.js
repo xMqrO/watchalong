@@ -402,18 +402,25 @@ params: {},
   },
 ];
 
-// VixSrc cannot play on the Vercel-deployed site. vixsrc.to WAF-blocks
-// *.vercel.app as a Referer (so the browser embed always gets a 403 page) and
-// also blocks Vercel's server IPs (so proxying it server-side fails too — the
-// shared Videasy mirror we used to fall back on is currently 502 as well).
-// From localhost/desktop the real embed works, so VixSrc is only dropped on a
-// hosted origin. Every consumer reads this filtered list, so the menu, the
+// vixsrc.to WAF-blocks *.vercel.app as a Referer (the browser embed gets a 403
+// page) and its player refuses to run with no Referer at all. The fix is the
+// static relay in relay/, deployed on a host vixsrc accepts (e.g. *.pages.dev):
+// we embed the relay, and the relay embeds vixsrc with its own origin as the
+// Referer. VITE_VIXSRC_RELAY overrides the relay URL (set it to "" to disable
+// the relay). Electron keeps the direct embed (its progress tracking reads
+// the player's frames directly). Without a relay, VixSrc is dropped on hosted
+// origins. Every consumer reads this filtered list, so the menu, the
 // "next source" walk and the stored-source validation all agree.
+const VIXSRC_RELAY = (
+  import.meta.env?.VITE_VIXSRC_RELAY ?? "https://watchalong-relay.pages.dev"
+).replace(/\/+$/, "");
+const USE_VIXSRC_RELAY =
+  !!VIXSRC_RELAY && !(typeof window !== "undefined" && window.electron);
 const HOSTED_ORIGIN =
   typeof location !== "undefined" && /\.vercel\.app$/i.test(location.hostname);
 
 export const PLAYER_SOURCES = ALL_PLAYER_SOURCES.filter(
-  (s) => !(s.id === "vixsrc" && HOSTED_ORIGIN),
+  (s) => !(s.id === "vixsrc" && HOSTED_ORIGIN && !USE_VIXSRC_RELAY),
 );
 
 export const getSourceUrl = (
@@ -461,6 +468,10 @@ export const getSourceUrl = (
       url.searchParams.set(key, value);
     }
   });
+
+  if (src.id === "vixsrc" && USE_VIXSRC_RELAY) {
+    return `${VIXSRC_RELAY}/?src=${encodeURIComponent(url.toString())}`;
+  }
 
   return url.toString();
 };

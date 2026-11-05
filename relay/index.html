@@ -1,0 +1,65 @@
+<!doctype html>
+<!--
+  WatchAlong VixSrc relay. Deploy this folder as its own static site on a host
+  whose domain vixsrc.to accepts as a Referer (e.g. Cloudflare Pages,
+  *.pages.dev). The main site embeds this page, and this page embeds vixsrc.to
+  with referrerpolicy="origin", so vixsrc sees the relay's domain instead of
+  *.vercel.app (which its Cloudflare WAF blocks).
+
+  Usage: https://<relay>/?src=<encoded https://vixsrc.to/movie|tv/... URL>
+  postMessage traffic is forwarded both ways so progress tracking still works.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="origin" />
+    <title>WatchAlong player</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+      iframe { border: 0; width: 100%; height: 100%; display: block; }
+      p { color: #f55; font: 14px sans-serif; text-align: center; margin-top: 40vh; }
+    </style>
+  </head>
+  <body>
+    <script>
+      (function () {
+        var raw = new URLSearchParams(location.search).get("src") || "";
+        var target;
+        try {
+          target = new URL(raw);
+        } catch (e) {}
+        // Only ever relay vixsrc.to player pages, so this can't be used as an
+        // open framing proxy for arbitrary sites.
+        if (
+          !target ||
+          target.protocol !== "https:" ||
+          target.hostname !== "vixsrc.to" ||
+          !/^\/(movie|tv)\//.test(target.pathname)
+        ) {
+          var p = document.createElement("p");
+          p.textContent = "Invalid player URL";
+          document.body.appendChild(p);
+          return;
+        }
+
+        var frame = document.createElement("iframe");
+        frame.src = target.href;
+        frame.referrerPolicy = "origin";
+        frame.allow = "autoplay; fullscreen; encrypted-media; picture-in-picture";
+        frame.allowFullscreen = true;
+        document.body.appendChild(frame);
+
+        window.addEventListener("message", function (e) {
+          if (e.source === frame.contentWindow) {
+            // Player -> main site.
+            if (window.parent !== window) window.parent.postMessage(e.data, "*");
+          } else if (e.source === window.parent) {
+            // Main site -> player.
+            if (frame.contentWindow) frame.contentWindow.postMessage(e.data, "*");
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>
