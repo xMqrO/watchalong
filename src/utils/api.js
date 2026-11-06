@@ -496,8 +496,12 @@ export const sourceIsServerResolved = (sourceId) =>
   PLAYER_SOURCES.find((s) => s.id === sourceId)?.serverResolved ?? false;
 
 // Sandbox flags for sources verified to play sandboxed; undefined = none.
+// In the Electron desktop app we block redirects and popups at the OS level,
+// so the iframe sandbox is unnecessary and breaks VixSrc's sandbox detector.
 export const sourceSandbox = (sourceId) =>
-  PLAYER_SOURCES.find((s) => s.id === sourceId)?.sandbox || undefined;
+  window.watchalongDesktop
+    ? undefined
+    : PLAYER_SOURCES.find((s) => s.id === sourceId)?.sandbox || undefined;
 
 export const sourceReferrerPolicy = (sourceId) =>
   PLAYER_SOURCES.find((s) => s.id === sourceId)?.referrerPolicy ||

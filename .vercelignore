@@ -1,4 +1,5 @@
 # Never upload secrets or build output to Vercel
+desktop/
 server/config.json
 dist/
 node_modules/

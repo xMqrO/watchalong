@@ -23,6 +23,9 @@
     "productName": "WatchAlong",
     "files": [
       "main.js",
+      "preload.cjs",
+      "build/icon.ico",
+      "build/icon.png",
       "package.json"
     ],
     "extraResources": [
@@ -41,6 +44,7 @@
       "repo": "watchalong"
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -56,7 +60,9 @@
       "perMachine": false,
       "allowElevation": false,
       "deleteAppDataOnUninstall": false,
-      "shortcutName": "WatchAlong"
+      "shortcutName": "WatchAlong",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
     },
     "directories": {
       "output": "release"

@@ -384,6 +384,62 @@ function ConfirmDialog({
   );
 }
 
+// ── Desktop app (only shown inside the Electron app) ─────────────────────────
+// Hardware acceleration works like Discord's: on by default, can be turned
+// off for driver trouble, applies after a restart.
+function DesktopAppSection() {
+  const api = typeof window !== "undefined" ? window.watchalongDesktop : null;
+  const [hw, setHw] = useState(null); // { enabled, active }
+
+  useEffect(() => {
+    api?.hardwareAcceleration
+      ?.get()
+      .then(setHw)
+      .catch(() => {});
+  }, [api]);
+
+  if (!api || !hw) return null;
+  const needsRestart = hw.enabled !== hw.active;
+
+  return (
+    <div style={{ marginBottom: 40 }}>
+      <SectionGroupHeader
+        title="Desktop app"
+        subtitle="Settings for the WatchAlong desktop app"
+      />
+      <ToggleRow
+        label="Hardware acceleration"
+        description="Uses your graphics card to decode and draw video, for smoother playback and less CPU use. Turn it off if the player flickers or shows a black picture. Applies after a restart."
+        value={hw.enabled}
+        onChange={async (v) => {
+          try {
+            setHw(await api.hardwareAcceleration.set(v));
+          } catch {}
+        }}
+      />
+      {needsRestart && (
+        <div
+          role="status"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            padding: "12px 0",
+            color: "var(--text2)",
+            fontSize: 13,
+          }}
+        >
+          <span>Restart WatchAlong to apply this change.</span>
+          <button className="btn btn-primary" onClick={() => api.relaunch()}>
+            Restart now
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Toggle Switch ─────────────────────────────────────────────────────────────
 function Toggle({ value, onChange, title }) {
   return (
@@ -4128,6 +4184,7 @@ export default function SettingsPage({
             />
           </div>
         </div>
+        <DesktopAppSection />
         {/* ══════════════════════════════════════════════════════════════════ */}
         <div ref={secSubtitles} style={{ scrollMarginTop: 80 }}>
           <SectionGroupHeader
