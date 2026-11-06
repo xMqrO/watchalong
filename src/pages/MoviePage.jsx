@@ -23,6 +23,7 @@ import {
   getNextServerResolved,
   sourceIsServerResolved,
   sourceReferrerPolicy,
+  sourceSandbox,
   shouldServerFirstEmbed,
   markEmbedServerFirst,
   clearEmbedServerFirst,
@@ -1332,6 +1333,7 @@ Movie not found on this source
               referrerPolicy={
                 isAsync ? "no-referrer" : sourceReferrerPolicy(playerSource)
               }
+              sandbox={isAsync ? undefined : sourceSandbox(playerSource)}
               onLoad={() => {
                 setWebviewLoading(false);
                 embedLoadFiredRef.current = true;
