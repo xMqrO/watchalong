@@ -179,13 +179,8 @@ params: {
     // VixSrc's player refuses to run with referrerpolicy="no-referrer" and
     // requires "origin".
     referrerPolicy: "origin",
-    // Tested: VixSrc plays inside this sandbox. With no allow-top-navigation
-    // the browser refuses every redirect of our page from the player, and
-    // with no allow-popups-to-escape-sandbox any popup it opens is locked
-    // down the same way. allow-popups itself must stay: without it VixSrc
-    // refuses to start. Restrictions carry into the relay's nested frame.
-    sandbox:
-      "allow-scripts allow-same-origin allow-forms allow-presentation allow-modals allow-downloads allow-pointer-lock allow-orientation-lock allow-popups",
+    // No sandbox: VixSrc detects it and shows "Please Disable Sandbox"
+    // instead of the video on first load.
     startParam: "startAt",
     movieUrl: (id) => `https://vixsrc.to/movie/${id}`,
     tvUrl: (id, season, ep) =>

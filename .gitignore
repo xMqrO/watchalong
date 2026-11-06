@@ -13,3 +13,5 @@ desktop/node_modules/
 
 .vercel
 .env*
+.wrangler/
+*.lnk
