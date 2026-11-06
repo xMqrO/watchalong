@@ -211,6 +211,13 @@ function createWindow() {
   // frame on Windows so the OS provides minimize/maximize/close.
   mainWindow.loadURL(APP_URL);
 
+  // Use destroy() so the beforeunload veto in the redirect shield doesn't
+  // block the close button — the OS-level protections make it unnecessary.
+  mainWindow.on("close", (e) => {
+    e.preventDefault();
+    mainWindow.destroy();
+  });
+
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
