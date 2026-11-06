@@ -66,7 +66,7 @@ import {
   clearFailoverSource,
 } from "../utils/storage";
 import { useAutoplay } from "../utils/useAutoplay";
-import { createOnVidReader } from "../utils/browserPlayer";
+import { createOnVidReader, RESUME_LOOKBACK_SEC } from "../utils/browserPlayer";
 import { fetchAniSkipTimings } from "../utils/aniSkip";
 import {
   fetchTVRating,
@@ -533,6 +533,7 @@ export default function TVPage({
   );
   const autoMarkedRef = useRef(false);
   const lastKnownTimeRef = useRef(0);
+  const lastKnownDurationRef = useRef(0); // real duration when the player reports it
   const durationRef = useRef(0); // tracked for AniSkip progress bar markers
   const seekBackCooldownRef = useRef(0);
 
@@ -1198,6 +1199,7 @@ export default function TVPage({
   useEffect(() => {
     autoMarkedRef.current = false;
     lastKnownTimeRef.current = 0;
+    lastKnownDurationRef.current = 0;
     seekBackCooldownRef.current = 0;
     durationRef.current = 0;
     localCountdownStartedRef.current = false;
@@ -1341,24 +1343,43 @@ export default function TVPage({
   useEffect(() => {
     if (isElectron && window.electron?.queryVideoProgress) return;
     const iframe = webviewRef.current;
-    const reader = createOnVidReader(iframe);
+    // Every time the player reports its position, record it at once (not on
+    // the next tick), so the saved spot is never more than ~1s behind.
+    const progressKeyAtAttach = currentProgressKey;
+    let lastWrite = 0;
+    const reader = createOnVidReader(iframe, {
+      onUpdate: ({ currentTime, duration }) => {
+        if (!(currentTime > 0) || !progressKeyAtAttach) return;
+        lastKnownTimeRef.current = currentTime;
+        if (duration > 0) lastKnownDurationRef.current = duration;
+        fallbackBaseSecRef.current = currentTime;
+        fallbackBaseAtRef.current = Date.now();
+        const now = Date.now();
+        if (now - lastWrite >= 1000) {
+          lastWrite = now;
+          storage.set("dlTime_" + progressKeyAtAttach, Math.floor(currentTime));
+        }
+      },
+    });
     browserReaderRef.current = reader;
     browserResumeSeekedRef.current = false;
-    // Anchor the wall-clock fallback to the saved position (minus the 10s
-    // lookback). `fallbackBaseAtRef` stays 0 (frozen) until the player iframe
-    // actually loads below, so iframe/buffer time is never counted as
-    // playback — otherwise the estimate jumps forward of the resume point.
+    // Anchor the wall-clock fallback to the resume point (saved position
+    // minus the lookback). `fallbackBaseAtRef` stays 0 (frozen) until the
+    // player iframe actually loads below, so iframe/buffer time is never
+    // counted as playback.
     const savedForBase = Number(
       storage.get("dlTime_" + currentProgressKey) || 0,
     );
     fallbackBaseSecRef.current =
-      savedForBase > 0 ? Math.max(0, savedForBase - 10) : savedForBase;
+      savedForBase > 0
+        ? Math.max(0, savedForBase - RESUME_LOOKBACK_SEC)
+        : savedForBase;
     fallbackBaseAtRef.current = 0;
 
     let resumeTimer = null;
     if (reader) {
       const savedSeconds =
-        savedForBase > 0 ? Math.max(0, savedForBase - 10) : 0;
+        savedForBase > 0 ? Math.max(0, savedForBase - RESUME_LOOKBACK_SEC) : 0;
       if (savedForBase >= 25) {
         resumeTimer = setTimeout(() => {
           let attempts = 0;
@@ -1462,7 +1483,7 @@ export default function TVPage({
     if (!aniSkipActive) setSkipPrompt(null);
     if (!playing || !currentProgressKey) return;
 
-    const TICK = aniSkipActive ? 1000 : 5000;
+    const TICK = aniSkipActive ? 1000 : 2000;
     let tickCount = 0;
     let interval = null;
 
@@ -1624,7 +1645,7 @@ export default function TVPage({
 
           // ── Progress logic: every 5s regardless of tick rate ────────────
           tickCount++;
-          if (aniSkipActive && tickCount % 5 !== 0) return;
+          if (aniSkipActive && tickCount % 2 !== 0) return;
 
           if (result && result.duration > 0) {
             durationRef.current = result.duration;
@@ -1704,25 +1725,35 @@ export default function TVPage({
       }, TICK);
     }, 3000);
 
+    // Write the last known position right now. Runs on teardown (source
+    // switch, episode change, stop, navigation) and when the tab is hidden
+    // or closed, so the saved spot is the real last second watched.
+    const flush = () => {
+      const key = currentProgressKey;
+      const last = lastKnownTimeRef.current;
+      if (!(last > 0)) return;
+      const total = durationRef.current || lastKnownDurationRef.current;
+      if (total > 0) {
+        saveProgressRef.current(
+          key,
+          Math.min(100, Math.floor((last / total) * 100)),
+        );
+      }
+      storage.set("dlTime_" + key, Math.floor(last));
+    };
+    const onHide = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onHide);
+
     return () => {
       clearTimeout(timer);
       clearInterval(interval);
       setSkipPrompt(null);
-      // Flush the last known position immediately on teardown (source
-      // switch, episode change, pause/stop, navigation) — the interval
-      // dies with the effect, so this is the final save for this session.
-      const key = currentProgressKey;
-      const last = lastKnownTimeRef.current;
-      if (last > 0) {
-        const total = durationRef.current;
-        if (total > 0) {
-          saveProgressRef.current(
-            key,
-            Math.min(100, Math.floor((last / total) * 100)),
-          );
-        }
-        storage.set("dlTime_" + key, Math.floor(last));
-      }
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onHide);
+      flush();
     };
   }, [
     playing,
@@ -1957,10 +1988,9 @@ export default function TVPage({
   // Resume the saved position by baking it into the embed URL (`?startAt=` for
   // hosts that support it). On the website this is the only reliable way to
   // resume: the OnVid postMessage seek is not answered by the current embeds.
-  // We rewind 10s from the saved spot so the user can remember what was
-  // happening. Memoized on source/item/episode so live progress saves never
-  // change the iframe src mid-playback (that would reload the player).
-  const RESUME_LOOKBACK_SEC = 10;
+  // We rewind RESUME_LOOKBACK_SEC (5s) from the saved spot so the user can
+  // pick the scene back up. Memoized on source/item/episode so live progress
+  // saves never change the iframe src mid-playback (that would reload it).
   const resumeSeconds = useMemo(() => {
     const saved = currentProgressKey
       ? Number(storage.get("dlTime_" + currentProgressKey) || 0)

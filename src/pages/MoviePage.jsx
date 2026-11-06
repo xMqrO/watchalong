@@ -53,7 +53,7 @@ import {
   setFailoverSource,
   clearFailoverSource,
 } from "../utils/storage";
-import { createOnVidReader } from "../utils/browserPlayer";
+import { createOnVidReader, RESUME_LOOKBACK_SEC } from "../utils/browserPlayer";
 import {
   fetchMovieRating,
   isRestricted,
@@ -228,6 +228,7 @@ export default function MoviePage({
   const autoMarkedRef = useRef(false);
   // Tracks last known playback position, used to detect resolution-change resets
   const lastKnownTimeRef = useRef(0);
+  const lastKnownDurationRef = useRef(0); // real duration when the player reports it
   // Timestamp until which we ignore reset detection (post-seekback cooldown)
   const seekBackCooldownRef = useRef(0);
 
@@ -657,22 +658,40 @@ export default function MoviePage({
   useEffect(() => {
     if (isElectron || !playing || !progressKey) return;
     const iframe = webviewRef.current;
-    const reader = createOnVidReader(iframe);
+    // Every time the player reports its position, record it at once (not on
+    // the next tick), so the saved spot is never more than ~1s behind.
+    let lastWrite = 0;
+    const reader = createOnVidReader(iframe, {
+      onUpdate: ({ currentTime, duration }) => {
+        if (!(currentTime > 0)) return;
+        lastKnownTimeRef.current = currentTime;
+        if (duration > 0) lastKnownDurationRef.current = duration;
+        fallbackBaseSecRef.current = currentTime;
+        fallbackBaseAtRef.current = Date.now();
+        const now = Date.now();
+        if (now - lastWrite >= 1000) {
+          lastWrite = now;
+          storage.set("dlTime_" + progressKey, Math.floor(currentTime));
+        }
+      },
+    });
     browserReaderRef.current = reader;
     browserResumeSeekedRef.current = false;
-    // Anchor the wall-clock fallback to the saved position (minus the 10s
-    // lookback). `fallbackBaseAtRef` stays 0 (frozen) until the player iframe
-    // actually loads below, so iframe/buffer time is never counted as
-    // playback — otherwise the estimate jumps forward of the resume point.
+    // Anchor the wall-clock fallback to the resume point (saved position
+    // minus the lookback). `fallbackBaseAtRef` stays 0 (frozen) until the
+    // player iframe actually loads below, so iframe/buffer time is never
+    // counted as playback.
     const savedForBase = Number(storage.get("dlTime_" + progressKey) || 0);
     fallbackBaseSecRef.current =
-      savedForBase > 0 ? Math.max(0, savedForBase - 10) : savedForBase;
+      savedForBase > 0
+        ? Math.max(0, savedForBase - RESUME_LOOKBACK_SEC)
+        : savedForBase;
     fallbackBaseAtRef.current = 0;
 
     let resumeTimer = null;
     if (reader) {
       const savedSeconds =
-        savedForBase > 0 ? Math.max(0, savedForBase - 10) : 0;
+        savedForBase > 0 ? Math.max(0, savedForBase - RESUME_LOOKBACK_SEC) : 0;
       if (savedForBase >= 25) {
         resumeTimer = setTimeout(() => {
           let attempts = 0;
@@ -704,7 +723,7 @@ export default function MoviePage({
     };
   }, [playing, playerSource, item.id, progressKey, isElectron]);
 
-  // ── Auto-track progress + auto-watched every 5s ──────────────────────────
+  // ── Auto-track progress + auto-watched every 2s ──────────────────────────
   useEffect(() => {
     if (!playing || !sourceSupportsProgress(playerSource)) return;
     let interval = null;
@@ -734,6 +753,7 @@ export default function MoviePage({
                 fallbackBaseSecRef.current = ct;
                 fallbackBaseAtRef.current = Date.now();
               }
+              lastKnownDurationRef.current = exact.duration;
               const p = Math.floor((ct / exact.duration) * 100);
               saveProgressRef.current(progressKey, Math.min(p, 100));
               storage.set("dlTime_" + progressKey, Math.floor(ct));
@@ -811,6 +831,7 @@ export default function MoviePage({
           }
           if (result && result.duration > 0) {
             const ct = result.currentTime;
+            lastKnownDurationRef.current = result.duration;
 
             // ── Resolution-change reset detection ──────────────────────────
             // Videasy resets to 0 on quality change. We only seek back if:
@@ -865,26 +886,42 @@ export default function MoviePage({
             }
           }
         } catch {}
-      }, 5000);
+      }, 2000);
     }, 3000);
+
+    // Write the last known position right now. Runs on teardown (source
+    // switch, stop, navigation) and when the tab is hidden or closed, so the
+    // saved spot is the real last second watched, not the last 2s tick.
+    const flush = () => {
+      const key = progressKey;
+      const last = lastKnownTimeRef.current;
+      if (!(last > 0)) return;
+      const total =
+        lastKnownDurationRef.current > 0
+          ? lastKnownDurationRef.current
+          : d?.runtime
+            ? d.runtime * 60
+            : 0;
+      if (total > 0) {
+        saveProgressRef.current(
+          key,
+          Math.min(100, Math.floor((last / total) * 100)),
+        );
+      }
+      storage.set("dlTime_" + key, Math.floor(last));
+    };
+    const onHide = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onHide);
+
     return () => {
       clearTimeout(timer);
       clearInterval(interval);
-      // Flush the last known position immediately on teardown (source
-      // switch, pause/stop, navigation) instead of waiting for the next
-      // 5s tick — the interval dies with the effect.
-      const key = progressKey;
-      const last = lastKnownTimeRef.current;
-      if (last > 0) {
-        const total = d?.runtime ? d.runtime * 60 : 0;
-        if (total > 0) {
-          saveProgressRef.current(
-            key,
-            Math.min(100, Math.floor((last / total) * 100)),
-          );
-        }
-        storage.set("dlTime_" + key, Math.floor(last));
-      }
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onHide);
+      flush();
     };
   }, [playing, progressKey, watchedThreshold, playerSource, progressViaFrames]);
 
@@ -974,10 +1011,9 @@ export default function MoviePage({
   // Resume the saved position by baking it into the embed URL (`?startAt=` for
   // hosts that support it). On the website this is the only reliable way to
   // resume: the OnVid postMessage seek is not answered by the current embeds.
-  // We rewind 10s from the saved spot so the user can remember what was
-  // happening. Memoized on source/item so live progress saves never change the
-  // iframe src mid-playback (that would reload the player).
-  const RESUME_LOOKBACK_SEC = 10;
+  // We rewind RESUME_LOOKBACK_SEC (5s) from the saved spot so the user can
+  // pick the scene back up. Memoized on source/item so live progress saves
+  // never change the iframe src mid-playback (that would reload the player).
   const resumeSeconds = useMemo(() => {
     const saved = Number(storage.get("dlTime_" + progressKey) || 0);
     return saved > 0 ? Math.max(0, saved - RESUME_LOOKBACK_SEC) : 0;
@@ -1302,7 +1338,7 @@ Movie not found on this source
                 shield.onPlayerLoad();
                 // Unfreeze the wall-clock fallback anchor now that the player
                 // iframe has loaded, so buffer/load time isn't counted as
-                // watched (keeps the 10s rewind honest).
+                // watched (keeps the resume rewind honest).
                 if (fallbackBaseAtRef.current === 0)
                   fallbackBaseAtRef.current = Date.now();
                 if (!isAsync) {
