@@ -373,7 +373,7 @@ export default function DownloadsPage({
           }}
         />
       )}
-      <div className="dl-page__title">DOWNLOADS</div>
+      <h1 className="dl-page__title">Downloads</h1>
       <div className="dl-page__subtitle">
         {active.length > 0 ? `${active.length} active` : "No active downloads"}{" "}
         · {allLocalItemsRaw.length} completed

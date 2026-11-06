@@ -56,11 +56,12 @@ export default class ErrorBoundary extends Component {
           style={{
             fontFamily: "var(--font-display, monospace)",
             fontSize: 28,
-            letterSpacing: 1,
+            fontWeight: 600,
+            letterSpacing: "-0.02em",
             color: "#fff",
           }}
         >
-          SOMETHING WENT WRONG
+          Something went wrong
         </div>
 
         <div

@@ -2929,6 +2929,17 @@ const EpisodeCard = memo(function EpisodeCard({
     <div
       className={`episode-card ${isPlaying ? "playing" : ""} ${epWatched ? "ep-watched" : ""} ${restricted ? "episode-card--restricted" : ""} ${epUnreleased ? "episode-card--unreleased" : ""}`}
       onClick={() => (restricted || epUnreleased ? null : onPlay(ep))}
+      role="button"
+      tabIndex={restricted || epUnreleased ? -1 : 0}
+      aria-disabled={restricted || epUnreleased ? true : undefined}
+      aria-label={`Episode ${ep.episode_number}: ${ep.name}`}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if ((e.key === "Enter" || e.key === " ") && !restricted && !epUnreleased) {
+          e.preventDefault();
+          onPlay(ep);
+        }
+      }}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();

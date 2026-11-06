@@ -1,18 +1,21 @@
 import { useState, useRef, useEffect } from "react";
 import { imgUrl } from "../utils/api";
 import { useSeasonalEvent } from "../components/seasonalEvents.jsx";
+import { WatchAlongLogo } from "./Icons";
 import {
-  WatchAlongLogo,
-  HomeIcon,
-  SearchIcon,
-  HistoryIcon,
-  FilmIcon,
-  SettingsIcon,
-  DownloadsQueueIcon,
-  QuitIcon,
-  BackIcon,
-  HelpIcon,
-} from "./Icons";
+  NavHomeIcon,
+  NavSearchIcon,
+  NavLibraryIcon,
+  NavDownloadsIcon,
+  NavHelpIcon,
+  NavSettingsIcon,
+  NavBackIcon,
+  NavQuitIcon,
+  NavPanelIcon,
+  NavFilmIcon,
+} from "./NavIcons";
+
+const AUTOHIDE_KEY = "watchalongSidebarAutoHide";
 
 export default function Sidebar({
   page,
@@ -33,6 +36,25 @@ export default function Sidebar({
 
   const [tooltip, setTooltip] = useState(null); // { title, y }
   const [contextMenu, setContextMenu] = useState(null); // { item, x, y }
+
+  // Auto-hide: the sidebar stays a slim icon strip and slides open while the
+  // pointer is over it (or keyboard focus is inside it). Remembered per device.
+  const [autoHide, setAutoHide] = useState(() => {
+    try {
+      return localStorage.getItem(AUTOHIDE_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("sidebar-autohide", autoHide);
+    try {
+      localStorage.setItem(AUTOHIDE_KEY, autoHide ? "1" : "0");
+    } catch {
+      /* storage unavailable: setting just won't persist */
+    }
+  }, [autoHide]);
 
   useEffect(() => {
     const close = () => setContextMenu(null);
@@ -91,6 +113,8 @@ export default function Sidebar({
     e.dataTransfer.dropEffect = "move";
   };
 
+  // The floating title tooltip is only needed in the collapsed icon rail,
+  // where saved items show as bare posters. CSS hides it when labels show.
   const handleMouseEnter = (e, title) => {
     const rect = e.currentTarget.getBoundingClientRect();
     setTooltip({ title, y: rect.top + rect.height / 2 });
@@ -100,88 +124,125 @@ export default function Sidebar({
     setTooltip(null);
   };
 
+  const openSaved = (item) =>
+    onNavigate(item.media_type === "tv" ? "tv" : "movie", item);
+
   return (
-    <div className="sidebar">
-      <div
+    <nav className="sidebar" aria-label="Main">
+      <button
+        type="button"
         className="sidebar-logo"
         onClick={() => onNavigate("home")}
-        title="WatchAlong"
-        style={{ position: "relative" }}
+        aria-label="WatchAlong home"
       >
-        <WatchAlongLogo />
-        {seasonalEvent && seasonalEvent.render()}
-      </div>
+        <span className="sidebar-logo-mark">
+          <WatchAlongLogo />
+          {seasonalEvent && seasonalEvent.render()}
+        </span>
+        <span className="sidebar-wordmark">WatchAlong</span>
+      </button>
 
       {canGoBack && (
-        <SideBtn onClick={onBack} icon={<BackIcon />} label="Back (Ctrl+Z)" />
+        <SideBtn
+          onClick={onBack}
+          icon={<NavBackIcon />}
+          label="Back"
+          hint="Ctrl+Z"
+          className="sidebar-btn--back"
+        />
       )}
 
-      <SideBtn onClick={onSearch} icon={<SearchIcon />} label="Search  (⌘F)" />
+      <SideBtn
+        onClick={onSearch}
+        icon={<NavSearchIcon />}
+        label="Search"
+        hint="⌘F"
+      />
       <SideBtn
         active={page === "home"}
         onClick={() => onNavigate("home")}
-        icon={<HomeIcon />}
+        icon={<NavHomeIcon filled={page === "home"} />}
         label="Home"
       />
       <SideBtn
         active={page === "history"}
         onClick={() => onNavigate("history")}
-        icon={<HistoryIcon />}
-        label="Library & History"
+        icon={<NavLibraryIcon filled={page === "history"} />}
+        label="Library"
       />
       <SideBtn
         active={page === "downloads"}
         onClick={() => onNavigate("downloads")}
-        icon={<DownloadsQueueIcon />}
+        icon={<NavDownloadsIcon filled={page === "downloads"} />}
         label="Downloads"
         badge={activeDownloads > 0 ? activeDownloads : null}
       />
 
       <div className="sidebar-sep" />
 
-      <div className="sidebar-saved">
+      {savedList.length > 0 && (
+        <div className="sidebar-heading" id="sidebar-saved-heading">
+          Saved
+        </div>
+      )}
+
+      <div
+        className="sidebar-saved"
+        aria-labelledby={savedList.length > 0 ? "sidebar-saved-heading" : undefined}
+      >
         {savedList.map((item, index) => {
           const key = `${item.media_type}_${item.id}`;
           const title = item.title || item.name;
+          const year = (item.release_date || item.first_air_date || "").slice(
+            0,
+            4,
+          );
           return (
             <div
               key={key}
               className={`saved-thumb${dragOver === index ? " drag-over" : ""}`}
+              role="button"
+              tabIndex={0}
+              aria-label={title}
               draggable
               onDragStart={(e) => handleDragStart(e, index)}
               onDragEnd={handleDragEnd}
               onDragEnter={(e) => handleDragEnter(e, index)}
               onDragOver={handleDragOver}
               onDrop={(e) => handleDrop(e, index)}
-              onClick={() =>
-                onNavigate(item.media_type === "tv" ? "tv" : "movie", item)
-              }
+              onClick={() => openSaved(item)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  openSaved(item);
+                }
+              }}
               onContextMenu={(e) => handleContextMenu(e, item)}
               onMouseEnter={(e) => handleMouseEnter(e, title)}
               onMouseLeave={handleMouseLeave}
-              style={{ cursor: "grab", position: "relative" }}
             >
-              {item.poster_path ? (
-                <img src={imgUrl(item.poster_path, "w200")} alt={title} />
-              ) : (
-                <div className="no-img">
-                  <FilmIcon />
-                </div>
-              )}
-              {dragOver === index && (
-                <div
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    height: 3,
-                    background: "var(--accent, #e50914)",
-                    borderRadius: 2,
-                    pointerEvents: "none",
-                  }}
-                />
-              )}
+              <span className="saved-thumb-img">
+                {item.poster_path ? (
+                  <img
+                    src={imgUrl(item.poster_path, "w200")}
+                    alt=""
+                    width="44"
+                    height="66"
+                  />
+                ) : (
+                  <span className="no-img">
+                    <NavFilmIcon />
+                  </span>
+                )}
+              </span>
+              <span className="saved-thumb-text">
+                <span className="saved-thumb-title">{title}</span>
+                <span className="saved-thumb-meta">
+                  {item.media_type === "tv" ? "Series" : "Movie"}
+                  {year ? ` · ${year}` : ""}
+                </span>
+              </span>
+              {dragOver === index && <span className="saved-thumb-drop" />}
             </div>
           );
         })}
@@ -204,76 +265,81 @@ export default function Sidebar({
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          <div
+          <button
+            type="button"
             className="sidebar-context-menu-item"
             onClick={() => {
               onRemoveSaved && onRemoveSaved(contextMenu.item);
               setContextMenu(null);
             }}
           >
-            Remove
-          </div>
+            Remove from saved
+          </button>
         </div>
       )}
 
       <div className="sidebar-bottom">
         <SideBtn
+          onClick={() => setAutoHide((v) => !v)}
+          icon={<NavPanelIcon filled={!autoHide} />}
+          label="Keep open"
+          pressed={!autoHide}
+          className="sidebar-btn--mode"
+        />
+        <SideBtn
           onClick={onShowShortcuts}
-          icon={<HelpIcon />}
-          label="Help & Shortcuts (?)"
+          icon={<NavHelpIcon />}
+          label="Help"
+          hint="?"
         />
         <SideBtn
           active={page === "settings"}
           onClick={() => onNavigate("settings")}
-          icon={<SettingsIcon />}
+          icon={<NavSettingsIcon filled={page === "settings"} />}
           label="Settings"
         />
         {window.electron?.quitApp && (
-          <button
-            className="sidebar-btn"
+          <SideBtn
             onClick={() => window.electron?.quitApp?.()}
-            title="Quit App"
-            style={{ color: "#e53e3e", marginTop: 4 }}
-          >
-            <QuitIcon />
-            <span className="tooltip">Quit App</span>
-          </button>
+            icon={<NavQuitIcon />}
+            label="Quit"
+            className="sidebar-btn--quit"
+          />
         )}
       </div>
-    </div>
+    </nav>
   );
 }
 
-function SideBtn({ active, onClick, icon, label, badge }) {
+function SideBtn({
+  active,
+  onClick,
+  icon,
+  label,
+  hint,
+  badge,
+  pressed,
+  className = "",
+}) {
   return (
     <button
-      className={`sidebar-btn ${active ? "active" : ""}`}
+      type="button"
+      className={`sidebar-btn${active ? " active" : ""}${className ? ` ${className}` : ""}`}
       onClick={onClick}
-      style={{ position: "relative" }}
+      aria-current={active ? "page" : undefined}
+      aria-pressed={pressed}
+      aria-label={hint ? `${label} (${hint})` : label}
     >
-      {icon}
-      <span className="tooltip">{label}</span>
-      {badge && (
-        <span
-          style={{
-            position: "absolute",
-            top: 4,
-            right: 4,
-            minWidth: 16,
-            height: 16,
-            borderRadius: 8,
-            background: "var(--red)",
-            color: "white",
-            fontSize: 10,
-            fontWeight: 700,
-            lineHeight: "16px",
-            textAlign: "center",
-            padding: "0 4px",
-          }}
-        >
-          {badge}
-        </span>
-      )}
+      <span className="sidebar-btn-icon" aria-hidden="true">
+        {icon}
+      </span>
+      <span className="sidebar-btn-label" aria-hidden="true">
+        {label}
+      </span>
+      <span className="tooltip" aria-hidden="true">
+        {label}
+      </span>
+      {badge && <span className="sidebar-badge">{badge}</span>}
     </button>
   );
 }

@@ -572,15 +572,15 @@ export default function UpdateModal({
                   marginBottom: 4,
                 }}
               >
-                <span style={{ fontSize: 20 }}>🎉</span>
                 <span
                   style={{
                     fontFamily: "var(--font-display)",
                     fontSize: 22,
-                    letterSpacing: 1,
+                    fontWeight: 600,
+                    letterSpacing: "-0.015em",
                   }}
                 >
-                  UPDATE AVAILABLE
+                  Update available
                 </span>
               </div>
               <div

@@ -229,12 +229,13 @@ function ResetConfirmDialog({ onConfirm, onCancel }) {
         <div
           style={{
             fontFamily: "var(--font-display)",
-            fontSize: 26,
-            letterSpacing: 1,
+            fontSize: 24,
+            fontWeight: 600,
+            letterSpacing: "-0.015em",
             marginBottom: 10,
           }}
         >
-          RESET WATCHALONG?
+          Reset WatchAlong?
         </div>
         <div
           style={{
@@ -334,7 +335,8 @@ function ConfirmDialog({
           style={{
             fontFamily: "var(--font-display)",
             fontSize: 22,
-            letterSpacing: 1,
+            fontWeight: 600,
+            letterSpacing: "-0.015em",
             marginBottom: 10,
           }}
         >
@@ -2694,11 +2696,10 @@ function SectionGroupHeader({ title, subtitle }) {
         <div
           style={{
             fontFamily: "var(--font-display)",
-            fontSize: 16,
-            letterSpacing: 2,
-            color: "var(--red)",
-            textTransform: "uppercase",
-            fontWeight: 700,
+            fontSize: 22,
+            letterSpacing: "-0.015em",
+            color: "var(--text)",
+            fontWeight: 600,
             whiteSpace: "nowrap",
           }}
         >
@@ -3783,16 +3784,17 @@ export default function SettingsPage({
         style={{ padding: "40px 48px 80px" }}
       >
         {/* Page title */}
-        <div
+        <h1
           style={{
             fontFamily: "var(--font-display)",
-            fontSize: 48,
-            letterSpacing: 1,
+            fontSize: 44,
+            fontWeight: 600,
+            letterSpacing: "-0.025em",
             marginBottom: 6,
           }}
         >
-          SETTINGS
-        </div>
+          Settings
+        </h1>
         <div style={{ color: "var(--text3)", fontSize: 14, marginBottom: 48 }}>
           App configuration for WatchAlong
         </div>

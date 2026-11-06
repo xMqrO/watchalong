@@ -1185,7 +1185,7 @@ export default function App() {
           activeDownloads={activeDownloadCount}
           onReorderSaved={handleReorderSaved}
           onRemoveSaved={toggleSave}
-          canGoBack={navStack.length > 0}
+          canGoBack={navStack.length > 0 && page !== "search"}
           onBack={navigateBack}
           onShowShortcuts={() => setShowShortcuts(true)}
         />
@@ -1247,6 +1247,7 @@ export default function App() {
                 onMarkUnwatched={markUnwatched}
                 history={history}
                 apiKey={apiKey}
+                onSearch={(query) => navigate("search", { query })}
               />
             )}
             {page === "movie" && selected && routeResolved && (
@@ -1345,6 +1346,9 @@ export default function App() {
                 apiKey={apiKey}
                 onSelect={handleSelectResult}
                 offline={offline}
+                isSaved={isSaved}
+                onToggleSave={toggleSave}
+                watched={watched}
               />
             )}
             {page === "notfound" && (

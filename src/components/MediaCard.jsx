@@ -84,7 +84,8 @@ const MediaCard = memo(function MediaCard({
 
   return (
     <>
-      <div
+      <button
+        type="button"
         className={`card${isWatched ? " ep-watched" : ""}${isUnreleased ? " card--unreleased" : ""}`}
         onClick={onClick}
         onContextMenu={isUnreleased ? undefined : openMenu}
@@ -93,16 +94,16 @@ const MediaCard = memo(function MediaCard({
           {item.poster_path ? (
             <img
               src={imgUrl(item.poster_path, "w342")}
-              alt={title}
+              alt=""
+              width="342"
+              height="513"
               loading="lazy"
             />
           ) : (
-            <div className="no-poster">
+            <span className="no-poster">
               {isTV ? <TVIcon /> : <FilmIcon />}
-              <span style={{ fontSize: 10, color: "var(--text3)" }}>
-                No Image
-              </span>
-            </div>
+              <span className="no-poster-title">{title}</span>
+            </span>
           )}
           {ageRating && (
             <div
@@ -120,7 +121,7 @@ const MediaCard = memo(function MediaCard({
           <div className="card-overlay">
             {isUnreleased ? (
               <div className="card-unreleased-overlay">
-                <span className="card-unreleased-label">🔒 Unreleased</span>
+                <span className="card-unreleased-label">Not out yet</span>
               </div>
             ) : (
               <div className="card-play">
@@ -152,12 +153,16 @@ const MediaCard = memo(function MediaCard({
               : `${year} · ${isTV ? "Series" : "Movie"}`}
           </div>
         </div>
-        <span
-          className={`card-badge${isUnreleased ? " card-badge--unreleased" : ""}${isAnime && !isUnreleased ? " card-badge--anime" : ""}`}
-        >
-          {isUnreleased ? "SOON" : isAnime ? "ANIME" : isTV ? "TV" : "HD"}
-        </span>
-      </div>
+        {/* Only labels the app actually knows. The old "HD" on every movie
+            was never checked against the source, so it is gone. */}
+        {(isUnreleased || isAnime) && (
+          <span
+            className={`card-badge${isUnreleased ? " card-badge--unreleased" : " card-badge--anime"}`}
+          >
+            {isUnreleased ? "Soon" : "Anime"}
+          </span>
+        )}
+      </button>
 
       {menu && (
         <div
@@ -168,11 +173,11 @@ const MediaCard = memo(function MediaCard({
         >
           {isWatched ? (
             <button className="context-menu-item" onClick={handleMarkUnwatched}>
-              ↩ Mark as Unwatched
+              Mark as unwatched
             </button>
           ) : (
             <button className="context-menu-item" onClick={handleMarkWatched}>
-              ✓ Mark as Watched
+              Mark as watched
             </button>
           )}
         </div>

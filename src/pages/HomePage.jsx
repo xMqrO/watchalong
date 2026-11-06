@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import MediaCard from "../components/MediaCard";
-import TrendingCarousel from "../components/TrendingCarousel";
+import PosterRow from "../components/PosterRow";
+import HeroSearch from "../components/HeroSearch";
 import { PlayIcon, StarIcon } from "../components/Icons";
 import { imgUrl, tmdbFetch } from "../utils/api";
 import { useRatings, getRatingForItem } from "../utils/useRatings";
@@ -46,8 +47,16 @@ export default function HomePage({
   onMarkUnwatched,
   history,
   apiKey,
+  onSearch,
 }) {
-  const hero = trending[0];
+  // Spotlight: the top trending movies that have a backdrop. The viewer picks
+  // which one fills the hero; nothing rotates on its own.
+  const spotlight = useMemo(
+    () => trending.filter((i) => i.backdrop_path).slice(0, 5),
+    [trending],
+  );
+  const [spotIndex, setSpotIndex] = useState(0);
+  const hero = spotlight[spotIndex] || spotlight[0] || trending[0];
 
   const [recommendedItems, setRecommendedItems] = useState([]);
   const [topRatedItems, setTopRatedItems] = useState([]);
@@ -206,238 +215,261 @@ export default function HomePage({
     [trendingTV],
   );
 
+  // Top rated, shown as a list ordered by the real TMDB score.
+  const topRatedByScore = useMemo(
+    () =>
+      [...topRatedItems]
+        .filter((i) => !itemRestricted(i))
+        .sort((a, b) => (b.vote_average || 0) - (a.vote_average || 0)),
+    [topRatedItems, itemRestricted],
+  );
+
+  const renderCard = (item, prog = 0, home = true) => {
+    const type = item.media_type === "tv" ? "tv" : "movie";
+    const rd = enrichedRatingsMap[`${type}_${item.id}`] || {};
+    return (
+      <MediaCard
+        key={`${item.media_type}_${item.id}`}
+        item={item}
+        onClick={() => onSelect(item)}
+        progress={prog}
+        watched={watched}
+        onMarkWatched={onMarkWatched}
+        onMarkUnwatched={onMarkUnwatched}
+        ageRating={rd.cert}
+        restricted={rd.restricted}
+        isHomeCard={home}
+      />
+    );
+  };
+
+  // "carousel" view mode (the default) now shows scrollable poster rows;
+  // "list" view mode keeps the wrapping grid.
+  const renderRow = (key, title, items) => {
+    if (!items || items.length === 0) return null;
+    if (viewMode === "list") {
+      return (
+        <section key={key} className="section" aria-labelledby={`row-${key}`}>
+          <h2 className="section-title" id={`row-${key}`}>
+            {title}
+          </h2>
+          <div className="cards-grid">{items.map((i) => renderCard(i))}</div>
+        </section>
+      );
+    }
+    return (
+      <PosterRow key={key} id={key} title={title}>
+        {items.map((i) => renderCard(i))}
+      </PosterRow>
+    );
+  };
+
   return (
-    <div className="fade-in">
+    <div className="home fade-in">
       {/* ── Offline ── */}
       {offline && (
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            minHeight: "60vh",
-            gap: 16,
-            color: "var(--text2)",
-          }}
-        >
-          <div style={{ fontSize: 48 }}>📡</div>
-          <div style={{ fontSize: 20, fontWeight: 600, color: "var(--text)" }}>
-            No internet connection
-          </div>
-          <div style={{ fontSize: 14, color: "var(--text3)" }}>
-            Trending and search require an internet connection. Your downloads
-            and library still work offline.
-          </div>
-          <button
-            className="btn btn-primary"
-            style={{ marginTop: 8 }}
-            onClick={onRetry}
-          >
-            Retry
+        <div className="state-panel" role="status">
+          <h1 className="state-panel-title">You're offline</h1>
+          <p className="state-panel-text">
+            Trending and search need an internet connection. Your downloads and
+            library still work.
+          </p>
+          <button className="btn btn-primary" onClick={onRetry}>
+            Try again
           </button>
         </div>
       )}
 
       {!offline && loading && (
-        <div className="loader">
+        <div className="loader" role="status" aria-label="Loading trending titles">
           <div className="spinner" />
         </div>
       )}
 
-      {/* ── Hero (always first) ── */}
+      {/* ── Spotlight ── */}
       {!loading && hero && (
-        <div className="hero">
-          <div
-            className="hero-bg"
-            style={{
-              backgroundImage: `url(${imgUrl(hero.backdrop_path, "original")})`,
-            }}
-          />
+        <section className="hero" aria-label="Spotlight">
+          <div className="hero-bg">
+            {hero.backdrop_path && (
+              <img
+                key={hero.id}
+                src={imgUrl(hero.backdrop_path, "w1280")}
+                srcSet={`${imgUrl(hero.backdrop_path, "w780")} 780w, ${imgUrl(hero.backdrop_path, "w1280")} 1280w, ${imgUrl(hero.backdrop_path, "original")} 2400w`}
+                sizes="100vw"
+                alt=""
+                width="1920"
+                height="1080"
+                fetchpriority="high"
+                decoding="async"
+              />
+            )}
+          </div>
           <div className="hero-gradient" />
-          <div className="hero-content">
-            <div className="hero-type">Trending · Movie</div>
-            <div className="hero-title">{hero.title || hero.name}</div>
-            <div className="hero-meta">
-              <span className="hero-rating">
-                <StarIcon /> {hero.vote_average?.toFixed(1)}
-              </span>
-              <span>{hero.release_date?.slice(0, 4)}</span>
+          {onSearch && (
+            <div className="hero-header">
+              <HeroSearch
+                apiKey={apiKey}
+                offline={offline}
+                onSelect={onSelect}
+                onSeeAll={onSearch}
+              />
             </div>
-            <div className="hero-overview">{hero.overview}</div>
+          )}
+          <div className="hero-content">
+            <p className="hero-type">
+              Trending now
+              {spotlight.length > 1 ? ` · ${spotIndex + 1} of ${spotlight.length}` : ""}
+            </p>
+            <h1 className="hero-title">{hero.title || hero.name}</h1>
+            <div className="hero-meta">
+              {hero.vote_average > 0 && (
+                <span className="hero-rating">
+                  <StarIcon /> {hero.vote_average.toFixed(1)}
+                </span>
+              )}
+              {hero.release_date && <span>{hero.release_date.slice(0, 4)}</span>}
+              <span>Movie</span>
+            </div>
+            <p className="hero-overview">{hero.overview}</p>
             <div className="hero-actions">
               <button
                 className="btn btn-primary"
-                onClick={() => onSelect(hero)}
+                onClick={() => onSelect({ ...hero, media_type: "movie" })}
               >
-                <PlayIcon /> Watch Now
-              </button>
-              <button
-                className="btn btn-secondary"
-                onClick={() => onSelect(hero)}
-              >
-                More Info
+                <PlayIcon /> Watch now
               </button>
             </div>
           </div>
-        </div>
+
+          {spotlight.length > 1 && (
+            <div className="spotlight-picker" role="group" aria-label="Choose spotlight title">
+              {spotlight.map((item, i) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`spotlight-tile${i === spotIndex ? " is-active" : ""}`}
+                  aria-pressed={i === spotIndex}
+                  onClick={() => setSpotIndex(i)}
+                >
+                  <img
+                    src={imgUrl(item.backdrop_path, "w300")}
+                    alt=""
+                    width="300"
+                    height="169"
+                    loading="lazy"
+                  />
+                  <span className="spotlight-tile-title">
+                    {item.title || item.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
       )}
 
       {/* ── Rows in user-configured order ── */}
-      {rowOrder.map((id) => {
-        if (!rowVisible[id]) return null;
+      <div className="home-rows">
+        {rowOrder.map((id) => {
+          if (!rowVisible[id]) return null;
 
-        if (id === "continue") {
-          if (inProgress.length === 0) return null;
-          return (
-            <div key="continue" className="section">
-              <div className="section-title">Continue Watching</div>
-              <div className="cards-grid">
-                {inProgress.map((item) => {
-                  const pk =
-                    item.media_type === "movie"
-                      ? `movie_${item.id}`
-                      : `tv_${item.id}_s${item.season}e${item.episode}`;
-                  const r = getRating(item);
-                  const restr = itemRestricted(item);
-                  return (
-                    <MediaCard
-                      key={`${item.media_type}_${item.id}`}
-                      item={item}
-                      onClick={() => onSelect(item)}
-                      progress={progress[pk] || 0}
-                      watched={watched}
-                      onMarkWatched={onMarkWatched}
-                      onMarkUnwatched={onMarkUnwatched}
-                      ageRating={r.cert}
-                      restricted={restr}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-          );
-        }
+          if (id === "continue") {
+            if (inProgress.length === 0) return null;
+            const cards = inProgress.map((item) => {
+              const pk =
+                item.media_type === "movie"
+                  ? `movie_${item.id}`
+                  : `tv_${item.id}_s${item.season}e${item.episode}`;
+              const r = getRating(item);
+              const restr = itemRestricted(item);
+              return (
+                <MediaCard
+                  key={`${item.media_type}_${item.id}`}
+                  item={item}
+                  onClick={() => onSelect(item)}
+                  progress={progress[pk] || 0}
+                  watched={watched}
+                  onMarkWatched={onMarkWatched}
+                  onMarkUnwatched={onMarkUnwatched}
+                  ageRating={r.cert}
+                  restricted={restr}
+                />
+              );
+            });
+            return (
+              <PosterRow key="continue" id="continue" title="Continue watching">
+                {cards}
+              </PosterRow>
+            );
+          }
 
-        // Render a section as a flat cards-grid (list view)
-        const renderList = (key, title, titleHighlight, items) => {
-          if (!items || items.length === 0) return null;
-          return (
-            <div key={key} className="section">
-              <div className="section-title">
-                {titleHighlight ? (
-                  <>
-                    {title}&nbsp;
-                    <span style={{ color: "var(--red)" }}>
-                      {titleHighlight}
-                    </span>
-                  </>
-                ) : (
-                  title
-                )}
-              </div>
-              <div className="cards-grid">
-                {items.map((item) => {
-                  const type = item.media_type === "tv" ? "tv" : "movie";
-                  const rk = `${type}_${item.id}`;
-                  const rd = enrichedRatingsMap[rk] || {};
-                  return (
-                    <MediaCard
-                      key={`${item.media_type}_${item.id}`}
-                      item={item}
-                      onClick={() => onSelect(item)}
-                      progress={0}
-                      watched={watched}
-                      onMarkWatched={onMarkWatched}
-                      onMarkUnwatched={onMarkUnwatched}
-                      ageRating={rd.cert}
-                      restricted={rd.restricted}
-                      isHomeCard
-                    />
-                  );
-                })}
-              </div>
-            </div>
-          );
-        };
-
-        if (id === "recommended") {
-          if (filteredRecommendedItems.length === 0) return null;
-          if (viewMode === "list")
-            return renderList(
+          if (id === "recommended")
+            return renderRow(
               "recommended",
-              "Recommended for You",
-              null,
+              "Because you watched",
               filteredRecommendedItems,
             );
-          return (
-            <TrendingCarousel
-              key="recommended"
-              items={filteredRecommendedItems}
-              title="Recommended for You"
-              onSelect={onSelect}
-              ratingsMap={enrichedRatingsMap}
-            />
-          );
-        }
+          if (id === "trendingMovies")
+            return renderRow("trendingMovies", "Trending movies", trendingMovieItems);
+          if (id === "trendingTV")
+            return renderRow("trendingTV", "Trending series", trendingTVItems);
 
-        if (id === "trendingMovies") {
-          if (trendingMovieItems.length === 0) return null;
-          if (viewMode === "list")
-            return renderList(
-              "trendingMovies",
-              "Trending Movies",
-              null,
-              trendingMovieItems,
+          if (id === "topRated") {
+            if (topRatedByScore.length === 0) return null;
+            if (viewMode === "list")
+              return renderRow("topRated", "Top rated", topRatedByScore);
+            return (
+              <section key="topRated" className="section top-rated" aria-labelledby="row-topRated">
+                <div className="section-head">
+                  <h2 className="section-title" id="row-topRated">
+                    Top rated
+                  </h2>
+                  <p className="section-note">Highest TMDB scores, movies and series</p>
+                </div>
+                <ol className="top-rated-list">
+                  {topRatedByScore.map((item) => {
+                    const title = item.title || item.name;
+                    const year = (item.release_date || item.first_air_date || "").slice(0, 4);
+                    return (
+                      <li key={`${item.media_type}_${item.id}`}>
+                        <button
+                          type="button"
+                          className="top-rated-item"
+                          onClick={() => onSelect(item)}
+                        >
+                          <span className="top-rated-score">
+                            {item.vote_average?.toFixed(1)}
+                          </span>
+                          <span className="top-rated-poster">
+                            {item.poster_path && (
+                              <img
+                                src={imgUrl(item.poster_path, "w92")}
+                                alt=""
+                                width="46"
+                                height="69"
+                                loading="lazy"
+                              />
+                            )}
+                          </span>
+                          <span className="top-rated-text">
+                            <span className="top-rated-title">{title}</span>
+                            <span className="top-rated-meta">
+                              {item.media_type === "tv" ? "Series" : "Movie"}
+                              {year ? ` · ${year}` : ""}
+                            </span>
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </section>
             );
-          return (
-            <TrendingCarousel
-              key="trendingMovies"
-              items={trendingMovieItems}
-              title="Trending Movies"
-              onSelect={onSelect}
-              ratingsMap={enrichedRatingsMap}
-            />
-          );
-        }
+          }
 
-        if (id === "trendingTV") {
-          if (trendingTVItems.length === 0) return null;
-          if (viewMode === "list")
-            return renderList(
-              "trendingTV",
-              "Trending Series",
-              null,
-              trendingTVItems,
-            );
-          return (
-            <TrendingCarousel
-              key="trendingTV"
-              items={trendingTVItems}
-              title="Trending Series"
-              onSelect={onSelect}
-              ratingsMap={enrichedRatingsMap}
-            />
-          );
-        }
-
-        if (id === "topRated") {
-          if (topRatedItems.length === 0) return null;
-          if (viewMode === "list")
-            return renderList("topRated", "Top Rated", null, topRatedItems);
-          return (
-            <TrendingCarousel
-              key="topRated"
-              items={topRatedItems}
-              title="Top Rated"
-              onSelect={onSelect}
-              ratingsMap={enrichedRatingsMap}
-            />
-          );
-        }
-
-        return null;
-      })}
+          return null;
+        })}
+      </div>
     </div>
   );
 }

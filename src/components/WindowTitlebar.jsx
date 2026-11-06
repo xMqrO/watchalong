@@ -66,7 +66,7 @@ export default function WindowTitlebar() {
           textOverflow: "ellipsis",
         }}
       >
-        WATCHALONG
+        WatchAlong
       </div>
 
       {/* Window control buttons, NOT draggable */}

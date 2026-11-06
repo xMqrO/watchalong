@@ -1,0 +1,2194 @@
+/*
+  WatchAlong redesign.
+
+  Reading this as: a personal streaming app for watching movies and series
+  at night, in a cinematic editorial language, dial ENERGY 3 / RHYTHM 2 /
+  MOTION 2.
+
+  Kept from before: only the colour tokens (--bg, --surface*, --border,
+  --text*, --red*). Every theme preset and the accent picker in Settings
+  still drive them, so all of them keep working.
+
+  Decisions (one line each, R-31):
+  - Type: DM Sans for everything, titles at 600 with tight tracking. Film
+    titles read as written ("Batman: Knightfall Part 1"), not as all-caps
+    poster text, and long titles stay legible.
+  - Accent: red marks playback and "where you are" only: the play button,
+    progress bars, the current page in the sidebar, the chosen spotlight.
+  - Identity motif: the red playhead bar. The same short red bar marks the
+    current nav item, the active spotlight tile and watch progress.
+  - Layout: art first. The spotlight takes most of the first screen; rows
+    bleed to the window edge so posters, not boxes, set the rhythm.
+  - Rhythm: spotlight (full bleed) > poster rows (horizontal) > top rated
+    (a two-column list ordered by real TMDB score).
+  - Radius: 4px for small labels, 6px for controls, 8px for artwork.
+  - Shadow: only on art that sits above other art (detail poster).
+  - Motion: hover lift on posters, smooth row paging, the backdrop fading
+    in when the spotlight changes. Nothing loops.
+*/
+
+:root {
+    --font-display: "DM Sans", system-ui, sans-serif;
+    --font-body: "DM Sans", system-ui, sans-serif;
+    --radius-sm: 4px;
+    --radius: 6px;
+    --radius-art: 8px;
+    --ring: var(--red);
+    --gutter: clamp(20px, 3.2vw, 52px);
+    --sidebar: 232px;
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (max-width: 1100px) {
+    :root {
+        --sidebar: 76px;
+    }
+}
+
+/* ── Base ────────────────────────────────────────────────────────────────── */
+body {
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+a[href],
+button:not(:disabled),
+summary,
+select,
+label[for],
+[role="button"],
+[role="tab"],
+[role="switch"] {
+    cursor: pointer;
+}
+
+button:disabled,
+[aria-disabled="true"] {
+    cursor: not-allowed;
+}
+
+:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* ── Sidebar: labelled navigation ────────────────────────────────────────── */
+@media (min-width: 769px) {
+    .sidebar {
+        width: var(--sidebar);
+        align-items: stretch;
+        padding: 18px 12px 14px;
+        gap: 2px;
+        background: var(--bg);
+        border-right: 1px solid var(--border);
+    }
+
+    .sidebar-logo {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: auto;
+        height: auto;
+        margin: 0 0 18px;
+        padding: 4px 10px;
+        background: none;
+        border: none;
+        border-radius: var(--radius);
+        color: var(--text);
+        font: 600 17px/1 var(--font-body);
+        letter-spacing: -0.01em;
+        overflow: visible;
+    }
+
+    .sidebar-logo img,
+    .sidebar-logo:hover img {
+        filter: none;
+    }
+
+    .sidebar-logo-mark {
+        position: relative;
+        width: 30px;
+        height: 30px;
+        flex-shrink: 0;
+    }
+
+    .sidebar-btn {
+        width: 100%;
+        height: 40px;
+        justify-content: flex-start;
+        gap: 12px;
+        padding: 0 12px;
+        border-radius: var(--radius);
+        color: var(--text2);
+        font: 500 14px/1 var(--font-body);
+        box-shadow: none;
+        transition:
+            color 0.15s,
+            background-color 0.15s;
+    }
+
+    .sidebar-btn-icon {
+        display: flex;
+        flex-shrink: 0;
+    }
+
+    .sidebar-btn svg {
+        width: 22px;
+        height: 22px;
+        flex-shrink: 0;
+    }
+
+    .sidebar-btn:hover {
+        color: var(--text);
+        background: color-mix(in srgb, var(--text) 7%, transparent);
+        box-shadow: none;
+    }
+
+    /* Current page: the playhead bar on the left edge plus a red icon. */
+    .sidebar-btn.active,
+    .sidebar-btn.active:hover {
+        color: var(--text);
+        background: color-mix(in srgb, var(--text) 9%, transparent);
+        box-shadow: inset 3px 0 0 var(--red);
+    }
+
+    .sidebar-btn.active .sidebar-btn-icon {
+        color: var(--red);
+    }
+
+    .sidebar-btn--quit {
+        color: #f87171;
+    }
+
+    .sidebar-btn .tooltip {
+        display: none;
+    }
+
+    .sidebar-badge {
+        margin-left: auto;
+        min-width: 20px;
+        height: 20px;
+        padding: 0 6px;
+        border-radius: 10px;
+        background: var(--red);
+        color: #fff;
+        font: 600 11px/20px var(--font-body);
+        text-align: center;
+    }
+
+    .sidebar-sep {
+        width: auto;
+        margin: 10px 12px;
+    }
+
+    .sidebar-heading {
+        padding: 6px 12px 8px;
+        color: var(--text3);
+        font: 600 12px/1 var(--font-body);
+    }
+
+    .sidebar-saved {
+        align-items: stretch;
+        gap: 2px;
+        padding: 0 0 8px;
+    }
+
+    .saved-thumb {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        height: auto;
+        padding: 6px 8px;
+        border: none;
+        border-radius: var(--radius);
+        overflow: hidden;
+        cursor: grab;
+        transition: background-color 0.15s;
+    }
+
+    .saved-thumb:hover,
+    .saved-thumb:focus-visible {
+        background: color-mix(in srgb, var(--text) 7%, transparent);
+        border: none;
+        transform: none;
+        box-shadow: none;
+    }
+
+    .saved-thumb-img {
+        width: 30px;
+        height: 45px;
+        flex-shrink: 0;
+        border-radius: var(--radius-sm);
+        overflow: hidden;
+        background: var(--surface3);
+    }
+
+    .saved-thumb-img img,
+    .saved-thumb-img .no-img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 0;
+    }
+
+    .saved-thumb-img .no-img svg {
+        width: 14px;
+        height: 14px;
+    }
+
+    .saved-thumb-text {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        min-width: 0;
+    }
+
+    .saved-thumb-title {
+        color: var(--text);
+        font: 500 13px/1.2 var(--font-body);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .saved-thumb-meta {
+        color: var(--text3);
+        font: 400 12px/1 var(--font-body);
+    }
+
+    .saved-thumb-drop {
+        position: absolute;
+        top: 0;
+        left: 8px;
+        right: 8px;
+        height: 2px;
+        background: var(--red);
+        border-radius: 1px;
+    }
+
+    .saved-thumb-tooltip {
+        display: none;
+    }
+
+    .sidebar-bottom {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding-top: 8px;
+        border-top: 1px solid var(--border);
+    }
+
+    .sidebar-context-menu {
+        padding: 4px;
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+    }
+
+    .sidebar-context-menu-item {
+        display: block;
+        width: 100%;
+        padding: 8px 12px;
+        background: none;
+        border: none;
+        border-radius: var(--radius-sm);
+        color: var(--text);
+        font: 500 13px/1.2 var(--font-body);
+        text-align: left;
+    }
+
+    .sidebar-context-menu-item:hover {
+        background: color-mix(in srgb, var(--text) 8%, transparent);
+    }
+}
+
+/* Narrow windows with "Keep open" on: an icon rail, names move to tooltips.
+   (With auto-hide on, the hover panel below handles every width.) */
+@media (min-width: 769px) and (max-width: 1100px) {
+    html:not(.sidebar-autohide) .sidebar {
+        padding: 14px 10px;
+        align-items: center;
+    }
+
+    html:not(.sidebar-autohide) .sidebar-logo {
+        padding: 4px;
+        margin-bottom: 14px;
+    }
+
+    html:not(.sidebar-autohide) .sidebar-wordmark,
+    html:not(.sidebar-autohide) .sidebar-btn-label,
+    html:not(.sidebar-autohide) .sidebar-heading,
+    html:not(.sidebar-autohide) .saved-thumb-text {
+        display: none;
+    }
+
+    html:not(.sidebar-autohide) .sidebar-btn {
+        width: 48px;
+        height: 44px;
+        justify-content: center;
+        padding: 0;
+    }
+
+    html:not(.sidebar-autohide) .sidebar-btn .tooltip {
+        display: block;
+    }
+
+    html:not(.sidebar-autohide) .sidebar-btn:hover .tooltip,
+    html:not(.sidebar-autohide) .sidebar-btn:focus-visible .tooltip {
+        opacity: 1;
+    }
+
+    html:not(.sidebar-autohide) .sidebar-badge {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        margin: 0;
+        min-width: 16px;
+        height: 16px;
+        line-height: 16px;
+        font-size: 10px;
+    }
+
+    html:not(.sidebar-autohide) .sidebar-sep {
+        width: 32px;
+        margin: 8px auto;
+    }
+
+    html:not(.sidebar-autohide) .saved-thumb {
+        width: auto;
+        padding: 3px;
+        justify-content: center;
+    }
+
+    html:not(.sidebar-autohide) .saved-thumb-img {
+        width: 40px;
+        height: 60px;
+    }
+
+    html:not(.sidebar-autohide) .saved-thumb-tooltip {
+        display: block;
+        left: calc(var(--sidebar) + 6px);
+    }
+
+    html:not(.sidebar-autohide) .sidebar-bottom {
+        align-items: center;
+        width: 100%;
+    }
+}
+
+/* Auto-hide.
+   The panel is always laid out at full width; when closed it is cropped
+   with clip-path to a 64px icon strip, and opening just uncrops it. Nothing
+   inside ever changes size or position, so there is no re-layout while it
+   moves: the reveal, the label fade and the divider scale are all paint or
+   compositor work, which is what makes it smooth.
+   - Icons sit in fixed 40px chips centred on the strip, identical in both
+     states, so they never shift or re-rasterise.
+   - Opens after 60ms (passing the pointer over it does nothing); closes
+     after 140ms (a brief slip off the edge does not snap it shut).
+   - Opens for the pointer or keyboard focus. :focus-visible, not
+     :focus-within: a mouse click leaves focus on a button and would keep
+     the panel stuck open. */
+@media (min-width: 769px) {
+    html.sidebar-autohide {
+        --sidebar: 64px;
+        --panel-w: 248px;
+        --panel-ease: cubic-bezier(0.32, 0.72, 0, 1);
+    }
+
+    html.sidebar-autohide .sidebar {
+        width: var(--panel-w);
+        padding: 18px 12px 14px;
+        overflow: hidden;
+        clip-path: inset(0 calc(var(--panel-w) - var(--sidebar)) 0 0);
+        /* Elevation: the open panel sits over the page. Only visible once
+           the clip opens past the panel edge. */
+        box-shadow: 18px 0 48px -18px color-mix(in srgb, #000 75%, transparent);
+        transition: clip-path 0.34s var(--panel-ease) 0.14s;
+        will-change: clip-path;
+    }
+
+    html.sidebar-autohide .sidebar:is(:hover, :has(:focus-visible)) {
+        clip-path: inset(0 -64px 0 0);
+        transition-delay: 0.06s;
+    }
+
+    /* Edge of the strip while closed (the panel's own border sits at its
+       full width and only shows when open). */
+    html.sidebar-autohide .sidebar::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: calc(var(--sidebar) - 1px);
+        width: 1px;
+        background: var(--border);
+        pointer-events: none;
+        transition: opacity 0.2s 0.14s;
+    }
+
+    html.sidebar-autohide .sidebar:is(:hover, :has(:focus-visible))::after {
+        opacity: 0;
+        transition-delay: 0s;
+    }
+
+    /* Icon chips: fixed 40x40, centred on the 64px strip. */
+    html.sidebar-autohide .sidebar-btn {
+        position: relative;
+        height: 44px;
+        gap: 10px;
+        padding: 0 12px 0 0;
+        white-space: nowrap;
+        background: none;
+        box-shadow: none;
+    }
+
+    html.sidebar-autohide .sidebar-btn-icon {
+        width: 40px;
+        height: 40px;
+        align-items: center;
+        justify-content: center;
+        border-radius: 10px;
+        transition:
+            background-color 0.15s,
+            color 0.15s;
+    }
+
+    html.sidebar-autohide .sidebar-btn:hover {
+        background: color-mix(in srgb, var(--text) 7%, transparent);
+    }
+
+    /* Current page: filled icon in a red-tinted chip, plus the playhead
+       bar on the window edge. */
+    html.sidebar-autohide .sidebar-btn.active,
+    html.sidebar-autohide .sidebar-btn.active:hover {
+        background: none;
+        box-shadow: none;
+    }
+
+    html.sidebar-autohide .sidebar-btn.active .sidebar-btn-icon {
+        background: color-mix(in srgb, var(--red) 16%, transparent);
+        color: var(--red);
+    }
+
+    html.sidebar-autohide .sidebar-btn.active::before {
+        content: "";
+        position: absolute;
+        left: -12px;
+        top: 10px;
+        bottom: 10px;
+        width: 3px;
+        border-radius: 0 2px 2px 0;
+        background: var(--red);
+    }
+
+    html.sidebar-autohide .sidebar-btn.active:hover .sidebar-btn-icon {
+        background: color-mix(in srgb, var(--red) 22%, transparent);
+    }
+
+    html.sidebar-autohide .sidebar-logo {
+        padding: 5px;
+        margin-bottom: 18px;
+    }
+
+    html.sidebar-autohide .saved-thumb {
+        padding: 5px;
+        gap: 12px;
+    }
+
+    /* Text fades and drifts in just after the reveal starts, and fades out
+       at once on close, so a half-open panel never shows clipped words. */
+    html.sidebar-autohide :is(.sidebar-btn-label, .sidebar-heading, .saved-thumb-text, .sidebar-wordmark) {
+        white-space: nowrap;
+        opacity: 0;
+        transform: translateX(-6px);
+        transition:
+            opacity 0.12s,
+            transform 0.12s;
+    }
+
+    html.sidebar-autohide .sidebar:is(:hover, :has(:focus-visible)) :is(.sidebar-btn-label, .sidebar-heading, .saved-thumb-text, .sidebar-wordmark) {
+        opacity: 1;
+        transform: none;
+        transition:
+            opacity 0.22s 0.12s,
+            transform 0.34s var(--panel-ease) 0.08s;
+    }
+
+    /* Dividers: short under the icons when closed, full width when open.
+       Scaled, not resized, so they animate on the compositor. */
+    html.sidebar-autohide .sidebar-sep {
+        width: auto;
+        margin: 10px 0;
+        transform: scaleX(0.18);
+        transform-origin: left;
+        transition: transform 0.34s var(--panel-ease) 0.14s;
+    }
+
+    html.sidebar-autohide .sidebar-bottom {
+        border-top: none;
+        padding-top: 0;
+    }
+
+    html.sidebar-autohide .sidebar-bottom::before {
+        content: "";
+        display: block;
+        height: 1px;
+        margin-bottom: 8px;
+        background: var(--border);
+        transform: scaleX(0.18);
+        transform-origin: left;
+        transition: transform 0.34s var(--panel-ease) 0.14s;
+    }
+
+    html.sidebar-autohide .sidebar:is(:hover, :has(:focus-visible)) .sidebar-sep,
+    html.sidebar-autohide .sidebar:is(:hover, :has(:focus-visible)) .sidebar-bottom::before {
+        transform: none;
+        transition-delay: 0.06s;
+    }
+
+    /* Download count rides on the icon chip in both states. */
+    html.sidebar-autohide .sidebar-badge {
+        position: absolute;
+        top: 2px;
+        left: 26px;
+        margin: 0;
+        min-width: 16px;
+        height: 16px;
+        padding: 0 4px;
+        font-size: 10px;
+        line-height: 16px;
+    }
+
+    html.sidebar-autohide .saved-thumb-tooltip {
+        display: none;
+    }
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 0 20px;
+    border-radius: var(--radius);
+    font: 600 14px/1 var(--font-body);
+    letter-spacing: 0;
+    transition:
+        background-color 0.15s,
+        border-color 0.15s,
+        color 0.15s,
+        transform 0.1s;
+}
+
+.btn:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+.btn:disabled {
+    opacity: 0.5;
+}
+
+.btn svg {
+    width: 18px;
+    height: 18px;
+}
+
+.btn-primary,
+.btn-primary:hover {
+    box-shadow: none;
+}
+
+.btn-primary:hover {
+    background: var(--red2);
+}
+
+.btn-secondary {
+    background: color-mix(in srgb, var(--text) 12%, transparent);
+    border: 1px solid transparent;
+}
+
+.btn-secondary:hover {
+    background: color-mix(in srgb, var(--text) 19%, transparent);
+}
+
+.btn-ghost {
+    border: 1px solid color-mix(in srgb, var(--text) 20%, transparent);
+}
+
+.btn-ghost:hover {
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+    border-color: color-mix(in srgb, var(--text) 32%, transparent);
+}
+
+/* ── Spotlight (home hero) ───────────────────────────────────────────────── */
+/* Text and picker stack at the bottom of the frame, so they can never
+   collide whatever the window width. */
+.hero {
+    height: auto;
+    min-height: clamp(560px, 88vh, 920px);
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    background: var(--bg);
+}
+
+.hero-bg {
+    background: var(--surface);
+}
+
+.hero-bg img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center 22%;
+    display: block;
+    animation: spotlight-in 0.6s var(--ease-out) both;
+}
+
+/* Purpose: when the viewer picks another title, the new backdrop fades in
+   instead of snapping, so the change reads as deliberate. Runs once. */
+@keyframes spotlight-in {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+.hero-bg::after {
+    background: color-mix(in srgb, var(--bg) 15%, transparent);
+}
+
+.hero-gradient {
+    background:
+        linear-gradient(
+            to right,
+            var(--bg) 0%,
+            color-mix(in srgb, var(--bg) 78%, transparent) 28%,
+            color-mix(in srgb, var(--bg) 15%, transparent) 58%,
+            transparent 78%
+        ),
+        linear-gradient(to top, var(--bg) 0%, transparent 42%);
+}
+
+.hero-content {
+    position: relative;
+    left: auto;
+    bottom: auto;
+    padding: 0 var(--gutter) 36px;
+    max-width: 760px;
+}
+
+/* Hero header: a search field-style button at the top of the spotlight.
+   It sits over arbitrary backdrop art, so it gets the one glass surface on
+   the page (blur keeps the text legible on bright and busy images). */
+.hero-header {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 2;
+    display: flex;
+    justify-content: center;
+    padding: clamp(16px, 3vh, 28px) var(--gutter) 0;
+}
+
+.hero-search-wrap {
+    position: relative;
+    width: min(600px, 100%);
+}
+
+.hero-search {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    height: 56px;
+    padding: 0 10px 0 20px;
+    background: color-mix(in srgb, var(--bg) 62%, transparent);
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
+    border-radius: 10px;
+    color: var(--text2);
+    transition:
+        background-color 0.15s,
+        color 0.15s,
+        border-radius 0.15s;
+}
+
+.hero-search:hover,
+.hero-search:focus-within {
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    color: var(--text);
+}
+
+/* Open with suggestions: field and list read as one surface. */
+.hero-search.is-open {
+    background: var(--surface);
+    border-radius: 10px 10px 0 0;
+}
+
+.hero-search > svg {
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+}
+
+.hero-search-input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    background: none;
+    border: none;
+    color: var(--text);
+    font: 500 16px/1 var(--font-body);
+}
+
+.hero-search-input::placeholder {
+    color: var(--text2);
+}
+
+/* The field shows focus through its darker surface plus this ring on the
+   whole bar, so the bare input does not draw a second outline. */
+.hero-search-input:focus-visible {
+    outline: none;
+}
+
+.hero-search:has(.hero-search-input:focus-visible) {
+    box-shadow: inset 0 0 0 2px var(--ring);
+}
+
+.hero-search-input::-webkit-search-cancel-button {
+    display: none;
+}
+
+.hero-search-clear {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius);
+    color: var(--text2);
+}
+
+.hero-search-clear:hover {
+    background: color-mix(in srgb, var(--text) 10%, transparent);
+    color: var(--text);
+}
+
+.hero-search-clear svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.75;
+    stroke-linecap: round;
+}
+
+/* Elevation: the suggestion list floats over the spotlight art. */
+.hero-suggest {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    max-height: min(440px, 60vh);
+    overflow-y: auto;
+    padding: 6px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    border-radius: 0 0 10px 10px;
+    box-shadow: 0 24px 48px -16px color-mix(in srgb, #000 70%, transparent);
+    animation: suggest-in 0.16s var(--ease-out);
+}
+
+/* Purpose: the list grows out of the field so it reads as attached. */
+@keyframes suggest-in {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+}
+
+.hero-suggest-note {
+    padding: 14px 12px;
+    color: var(--text2);
+    font-size: 14px;
+    line-height: 1.45;
+}
+
+.hero-suggest-item {
+    display: grid;
+    grid-template-columns: 36px 1fr auto;
+    align-items: center;
+    gap: 12px;
+    padding: 7px 10px;
+    border-radius: var(--radius);
+    cursor: pointer;
+}
+
+.hero-suggest-item.is-active {
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.hero-suggest-all.is-active {
+    background: var(--surface2);
+}
+
+.hero-suggest-poster {
+    width: 36px;
+    height: 54px;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: var(--surface3);
+}
+
+.hero-suggest-poster img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.hero-suggest-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.hero-suggest-title {
+    color: var(--text);
+    font: 500 15px/1.25 var(--font-body);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.hero-suggest-meta {
+    color: var(--text3);
+    font-size: 13px;
+}
+
+.hero-suggest-score {
+    color: var(--text2);
+    font: 600 14px/1 var(--font-body);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Pinned to the bottom of the list so it is reachable without scrolling. */
+.hero-suggest-all {
+    position: sticky;
+    bottom: -6px;
+    margin: 4px -6px -6px;
+    padding: 14px 16px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    border-radius: 0 0 10px 10px;
+    color: var(--text);
+    font: 600 14px/1.2 var(--font-body);
+    cursor: pointer;
+}
+
+.hero-type {
+    margin: 0 0 14px;
+    color: var(--text2);
+    font: 500 14px/1 var(--font-body);
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.hero-title {
+    margin: 0 0 18px;
+    color: var(--text);
+    font: 600 clamp(40px, 5.4vw, 88px) / 0.98 var(--font-display);
+    letter-spacing: -0.03em;
+    text-wrap: balance;
+}
+
+.hero-meta {
+    gap: 16px;
+    margin-bottom: 16px;
+    color: var(--text2);
+    font-size: 14px;
+}
+
+.hero-rating,
+.detail-rating {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.hero-rating svg,
+.detail-rating svg {
+    color: #f5c518;
+    fill: #f5c518;
+}
+
+.hero-overview {
+    max-width: 54ch;
+    margin-bottom: 28px;
+    color: var(--text);
+    opacity: 0.85;
+    font-size: 16px;
+    line-height: 1.55;
+}
+
+.hero-actions .btn {
+    min-height: 52px;
+    padding: 0 30px;
+    font-size: 15px;
+}
+
+.spotlight-picker {
+    position: relative;
+    display: flex;
+    gap: 12px;
+    padding: 12px var(--gutter) clamp(32px, 5vh, 48px);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.spotlight-picker::-webkit-scrollbar {
+    display: none;
+}
+
+.spotlight-tile {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex-shrink: 0;
+    width: clamp(120px, 10vw, 168px);
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--text2);
+    text-align: left;
+    opacity: 0.72;
+    transition: opacity 0.15s;
+}
+
+.spotlight-tile img {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    height: auto;
+    object-fit: cover;
+    border-radius: var(--radius);
+    background: var(--surface2);
+    display: block;
+}
+
+.spotlight-tile-title {
+    font: 500 12px/1.25 var(--font-body);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* The chosen tile carries the playhead bar above its frame. */
+.spotlight-tile::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: -8px;
+    width: 0;
+    height: 3px;
+    background: var(--red);
+    border-radius: 2px;
+    transition: width 0.3s var(--ease-out);
+}
+
+.spotlight-tile.is-active::after {
+    width: 100%;
+}
+
+.spotlight-tile:hover,
+.spotlight-tile.is-active {
+    opacity: 1;
+    color: var(--text);
+}
+
+.spotlight-tile.is-active img {
+    outline: 2px solid var(--text);
+    outline-offset: -2px;
+}
+
+
+/* ── Sections and rows ───────────────────────────────────────────────────── */
+.home-rows {
+    padding: 8px 0 64px;
+}
+
+.section,
+.carousel-section {
+    padding: 0 var(--gutter);
+    margin-bottom: clamp(36px, 5vh, 56px);
+}
+
+.section-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+}
+
+.section-title {
+    margin: 0 0 14px;
+    color: var(--text);
+    font: 600 clamp(20px, 1.6vw, 24px) / 1.2 var(--font-display);
+    letter-spacing: -0.015em;
+}
+
+.section-head .section-title {
+    margin: 0;
+}
+
+.section-title::after {
+    display: none;
+}
+
+.section-note {
+    margin-top: 4px;
+    color: var(--text3);
+    font-size: 13px;
+}
+
+.poster-row-nav {
+    display: flex;
+    gap: 6px;
+}
+
+.row-arrow {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+    border: none;
+    border-radius: var(--radius);
+    color: var(--text);
+    transition:
+        background-color 0.15s,
+        opacity 0.15s;
+}
+
+.row-arrow:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--text) 16%, transparent);
+}
+
+.row-arrow:disabled {
+    opacity: 0.3;
+}
+
+.row-arrow svg {
+    width: 20px;
+    height: 20px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+/* Rows bleed to the window edge; the first poster still lines up with the
+   section title because the scroll padding equals the gutter. */
+.poster-row-track {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: clamp(132px, 12.5vw, 196px);
+    gap: clamp(12px, 1.2vw, 18px);
+    margin: 0 calc(-1 * var(--gutter));
+    padding: 6px var(--gutter) 10px;
+    scroll-padding: 0 var(--gutter);
+    scroll-snap-type: x proximity;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+}
+
+.poster-row-track::-webkit-scrollbar {
+    display: none;
+}
+
+.poster-row-track > .card {
+    width: auto;
+    scroll-snap-align: start;
+}
+
+/* ── Cards ───────────────────────────────────────────────────────────────── */
+.cards-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 24px 16px;
+}
+
+.card {
+    display: block;
+    width: 100%;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 0;
+    overflow: visible;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    box-shadow: none;
+    transition: none;
+}
+
+.card:hover,
+.card:focus-visible,
+.card:focus {
+    transform: none;
+    border-color: transparent;
+    box-shadow: none;
+    outline: none;
+}
+
+.card-poster {
+    border-radius: var(--radius-art);
+    background: var(--surface2);
+    transition:
+        transform 0.25s var(--ease-out),
+        filter 0.25s;
+}
+
+.card:hover .card-poster {
+    transform: translateY(-4px);
+    filter: brightness(1.08);
+}
+
+.card:focus-visible .card-poster {
+    outline: 2px solid var(--ring);
+    outline-offset: 3px;
+}
+
+.card-poster .no-poster {
+    padding: 12px;
+    text-align: center;
+}
+
+.no-poster-title {
+    color: var(--text2);
+    font: 500 12px/1.3 var(--font-body);
+}
+
+.card-overlay {
+    background: color-mix(in srgb, #000 30%, transparent);
+}
+
+.card-play {
+    width: 48px;
+    height: 48px;
+    box-shadow: none;
+}
+
+.card-info,
+body.compact-mode .card-info,
+.card--compact .card-info {
+    padding: 10px 2px 0;
+    background: none;
+}
+
+.card-title,
+.card--compact .card-title {
+    color: var(--text);
+    font: 500 14px/1.3 var(--font-body);
+    margin-bottom: 3px;
+}
+
+.card-year,
+.card--compact .card-year {
+    color: var(--text3);
+    font-size: 12px;
+}
+
+/* Top-right: the age rating already owns the top-left corner. */
+.card-badge {
+    top: 8px;
+    right: 8px;
+    left: auto;
+    padding: 3px 7px;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, #000 70%, transparent);
+    color: #fff;
+    font: 600 11px/1.2 var(--font-body);
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.card-badge--unreleased {
+    background: var(--red);
+}
+
+.card-progress {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    height: 3px;
+    border-radius: 2px;
+    overflow: hidden;
+    background: color-mix(in srgb, #fff 25%, transparent);
+}
+
+.card-progress-fill {
+    background: var(--red);
+    border-radius: 2px;
+}
+
+/* ── Top rated list ──────────────────────────────────────────────────────── */
+.top-rated-list {
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
+    column-gap: clamp(16px, 3vw, 48px);
+}
+
+.top-rated-list li {
+    border-bottom: 1px solid var(--border);
+}
+
+.top-rated-item {
+    display: grid;
+    grid-template-columns: 52px 46px 1fr;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 8px;
+    background: none;
+    border: none;
+    border-radius: var(--radius);
+    color: var(--text);
+    text-align: left;
+    transition: background-color 0.15s;
+}
+
+.top-rated-item:hover {
+    background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.top-rated-score {
+    font: 600 22px/1 var(--font-display);
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+}
+
+.top-rated-poster {
+    width: 46px;
+    height: 69px;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: var(--surface2);
+}
+
+.top-rated-poster img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.top-rated-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.top-rated-title {
+    font: 500 15px/1.25 var(--font-body);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.top-rated-meta {
+    color: var(--text3);
+    font-size: 13px;
+}
+
+/* ── Empty / offline state ───────────────────────────────────────────────── */
+.state-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 12px;
+    min-height: 60vh;
+    max-width: 520px;
+    padding: 0 var(--gutter);
+}
+
+.state-panel-title {
+    font: 600 32px/1.1 var(--font-display);
+    letter-spacing: -0.02em;
+}
+
+.state-panel-text {
+    color: var(--text2);
+    font-size: 15px;
+    line-height: 1.55;
+    margin-bottom: 8px;
+}
+
+/* ── Detail page (movie / series) ────────────────────────────────────────── */
+.detail-hero {
+    min-height: clamp(480px, 72vh, 760px);
+    display: flex;
+    align-items: flex-end;
+    background: var(--bg);
+}
+
+.detail-bg::after {
+    background: color-mix(in srgb, var(--bg) 25%, transparent);
+}
+
+.detail-gradient {
+    background:
+        linear-gradient(
+            to right,
+            color-mix(in srgb, var(--bg) 88%, transparent) 0%,
+            color-mix(in srgb, var(--bg) 40%, transparent) 55%,
+            transparent 100%
+        ),
+        linear-gradient(to top, var(--bg) 0%, transparent 55%);
+}
+
+.detail-content {
+    width: 100%;
+    gap: clamp(24px, 3vw, 48px);
+    padding: clamp(32px, 7vh, 72px) var(--gutter);
+}
+
+.detail-poster {
+    width: clamp(170px, 15vw, 250px);
+    border: none;
+    border-radius: var(--radius-art);
+    box-shadow: 0 24px 50px -18px color-mix(in srgb, #000 80%, transparent);
+}
+
+.detail-type {
+    margin-bottom: 12px;
+    color: var(--text2);
+    font: 500 14px/1 var(--font-body);
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.detail-title {
+    margin-bottom: 18px;
+    font: 600 clamp(36px, 4.8vw, 80px) / 1 var(--font-display);
+    letter-spacing: -0.03em;
+    text-wrap: balance;
+}
+
+.detail-meta {
+    gap: 14px;
+    font-size: 14px;
+}
+
+.detail-overview {
+    max-width: 62ch;
+    margin-bottom: 28px;
+    color: var(--text);
+    opacity: 0.85;
+    font-size: 16px;
+    line-height: 1.6;
+}
+
+.detail-actions {
+    gap: 10px;
+}
+
+.genres {
+    gap: 6px;
+}
+
+.genre-tag {
+    padding: 4px 10px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--text) 11%, transparent);
+    color: var(--text);
+    font-size: 12px;
+}
+
+/* ── Seasons and episodes ────────────────────────────────────────────────── */
+/* Seasons read as tabs: plain text, the chosen one carries the playhead bar.
+   Green / amber text stays because it marks real watched / partly watched. */
+.season-selector {
+    gap: 4px 20px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+}
+
+.season-btn,
+.season-btn.active,
+.season-btn.season-watched.active,
+.season-btn.season-partial.active {
+    position: relative;
+    min-height: 44px;
+    padding: 0 2px;
+    border: none;
+    border-radius: 0;
+    background: none;
+    color: var(--text2);
+    font: 500 14px/1 var(--font-body);
+    box-shadow: none;
+}
+
+.season-btn:hover,
+.season-btn.season-watched:hover,
+.season-btn.season-partial:hover {
+    color: var(--text);
+    border: none;
+    box-shadow: none;
+}
+
+.season-btn.season-watched {
+    color: rgb(72, 199, 116);
+}
+
+.season-btn.season-partial {
+    color: rgb(255, 183, 77);
+}
+
+.season-btn.active {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.season-btn.active::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 3px;
+    background: var(--red);
+    border-radius: 2px 2px 0 0;
+}
+
+.episodes-grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+    gap: 8px 16px;
+}
+
+.episode-card {
+    gap: 14px;
+    padding: 10px;
+    border: none;
+    border-radius: var(--radius-art);
+    background: none;
+    transition: background-color 0.15s;
+}
+
+.episode-card:hover {
+    border: none;
+    background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+/* Now playing: a real state, marked with the playhead bar. */
+.episode-card.playing {
+    border: none;
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+    box-shadow: inset 3px 0 0 var(--red);
+}
+
+.episode-playing-dot {
+    animation: none;
+}
+
+.episode-playing-badge {
+    letter-spacing: 0;
+    text-transform: none;
+    font: 600 12px/1 var(--font-body);
+}
+
+.episode-thumb {
+    width: 148px;
+    border-radius: var(--radius);
+}
+
+.episode-num {
+    margin-bottom: 4px;
+    color: var(--text3);
+    font: 600 12px/1 var(--font-body);
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.episode-name {
+    font: 500 15px/1.3 var(--font-body);
+}
+
+.episode-desc {
+    color: var(--text2);
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+.episode-desc-toggle {
+    color: var(--text2);
+    font: 500 12px/1.4 var(--font-body);
+    letter-spacing: 0;
+    text-transform: none;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    opacity: 1;
+}
+
+.episode-desc-toggle:hover {
+    color: var(--text);
+}
+
+/* ── Library ─────────────────────────────────────────────────────────────── */
+.library-header {
+    padding: clamp(32px, 6vh, 56px) var(--gutter) 0;
+}
+
+.library-title {
+    font: 600 clamp(32px, 3.4vw, 48px) / 1.05 var(--font-display);
+    letter-spacing: -0.025em;
+}
+
+.library-sub {
+    color: var(--text2);
+    font-size: 15px;
+}
+
+.library-section {
+    padding: 32px var(--gutter);
+}
+
+.library-section-title {
+    margin-bottom: 12px;
+    color: var(--text);
+    font: 600 18px/1.2 var(--font-display);
+    letter-spacing: -0.01em;
+    text-transform: none;
+}
+
+.history-rows {
+    gap: 0;
+}
+
+.history-row {
+    gap: 16px;
+    min-height: 64px;
+    padding: 10px 8px;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    background: none;
+    transition: background-color 0.15s;
+}
+
+.history-row:hover {
+    border-color: var(--border);
+    background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+/* The remove button was only visible on mouse hover; keyboard users now
+   see it when it has focus too. */
+.history-remove-btn:focus-visible,
+.history-row:focus-within .history-remove-btn {
+    opacity: 1;
+}
+
+/* Labels such as "Movie" / "Series" are metadata, not alerts. */
+.tag,
+.tag-red,
+.search-result-type,
+.type-movie,
+.type-tv {
+    padding: 3px 8px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--text) 10%, transparent);
+    color: var(--text2);
+    font: 500 12px/1.2 var(--font-body);
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.empty-state {
+    color: var(--text2);
+}
+
+/* ── Downloads ───────────────────────────────────────────────────────────── */
+.dl-page__title {
+    font: 600 clamp(32px, 3.4vw, 48px) / 1.05 var(--font-display);
+    letter-spacing: -0.025em;
+}
+
+.dl-page__subtitle {
+    color: var(--text2);
+}
+
+/* ── Settings ────────────────────────────────────────────────────────────── */
+.settings-section-title {
+    margin-bottom: 10px;
+    color: var(--text);
+    font: 600 15px/1.3 var(--font-body);
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+/* ── Search ──────────────────────────────────────────────────────────────── */
+.search-box {
+    border-radius: var(--radius-art);
+}
+
+.search-input-wrap {
+    padding: 18px 20px;
+    box-shadow: inset 0 -2px 0 transparent;
+    transition: box-shadow 0.15s;
+}
+
+/* The input hides its own outline; the field shows focus with the red
+   playhead line along its bottom edge instead. */
+.search-input-wrap:focus-within {
+    box-shadow: inset 0 -2px 0 var(--red);
+}
+
+.search-input,
+.search-input:focus-visible {
+    font-size: 19px;
+    outline: none;
+}
+
+.search-result {
+    min-height: 44px;
+}
+
+.search-result:hover,
+.search-result:focus-visible {
+    background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+.search-result-title {
+    font-weight: 600;
+}
+
+.search-history-label {
+    color: var(--text2);
+    font: 600 13px/1 var(--font-body);
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+/* ── Search results page ─────────────────────────────────────────────────── */
+/* The spotlight's suggestion list must be able to hang below the header. */
+.home .hero {
+    overflow: visible;
+}
+
+.results-page {
+    padding: clamp(24px, 5vh, 48px) var(--gutter) 64px;
+}
+
+.results-head {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-bottom: 24px;
+}
+
+.results-input {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    height: 60px;
+    padding: 0 10px 0 20px;
+    background: var(--surface);
+    border-radius: 10px;
+    color: var(--text2);
+}
+
+.results-input:has(input:focus-visible) {
+    box-shadow: inset 0 0 0 2px var(--ring);
+}
+
+.results-input > svg {
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+}
+
+.results-input-field {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    background: none;
+    border: none;
+    color: var(--text);
+    font: 500 18px/1 var(--font-body);
+}
+
+.results-input-field:focus-visible {
+    outline: none;
+}
+
+.results-input-field::placeholder {
+    color: var(--text2);
+}
+
+.results-input-field::-webkit-search-cancel-button {
+    display: none;
+}
+
+.results-input-clear {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius);
+    color: var(--text2);
+}
+
+.results-input-clear:hover {
+    background: color-mix(in srgb, var(--text) 10%, transparent);
+    color: var(--text);
+}
+
+.results-input-clear svg {
+    width: 18px;
+    height: 18px;
+}
+
+/* Filters: native selects (keyboard, screen readers and touch all work),
+   each with a small visible label above it. */
+.results-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 10px;
+}
+
+.filter {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 150px;
+    flex: 1 1 150px;
+    max-width: 220px;
+}
+
+.filter-label {
+    color: var(--text3);
+    font: 500 12px/1 var(--font-body);
+}
+
+.filter select {
+    height: 44px;
+    padding: 0 36px 0 14px;
+    background-color: var(--surface);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 16px;
+    border: none;
+    border-radius: var(--radius);
+    color: var(--text);
+    font: 500 14px/1 var(--font-body);
+    appearance: none;
+    transition: background-color 0.15s;
+}
+
+.filter select:hover {
+    background-color: var(--surface2);
+}
+
+.filter select option {
+    background: var(--surface);
+    color: var(--text);
+}
+
+.filter-reset {
+    min-height: 44px;
+}
+
+.results-count {
+    margin-bottom: 14px;
+    color: var(--text2);
+    font-size: 14px;
+}
+
+.results-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(170px, 42vw), 1fr));
+    gap: 28px 18px;
+}
+
+.result-tile {
+    position: relative;
+}
+
+/* Poster corners: Save top-left, score top-right, age rating bottom-left
+   (inside the poster box), Anime / Soon under the Save button. */
+.result-score {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 7px;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, #000 72%, transparent);
+    color: #fff;
+    font: 600 12px/1 var(--font-body);
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+}
+
+.result-score svg {
+    width: 12px;
+    height: 12px;
+    fill: #f5c518;
+}
+
+.result-tile .card-badge {
+    top: 52px;
+    right: auto;
+    left: 8px;
+}
+
+.result-tile .card-age-badge {
+    top: auto;
+    bottom: 8px;
+    left: 8px;
+}
+
+/* Always visible, so it works on touch screens too. */
+.result-save {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: color-mix(in srgb, #000 65%, transparent);
+    border: none;
+    border-radius: var(--radius);
+    color: #fff;
+    transition:
+        background-color 0.15s,
+        transform 0.1s;
+}
+
+.result-save:hover {
+    background: color-mix(in srgb, #000 85%, transparent);
+}
+
+.result-save:active {
+    transform: scale(0.94);
+}
+
+.result-save svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.75;
+    stroke-linejoin: round;
+}
+
+.result-save.is-saved svg {
+    fill: currentColor;
+}
+
+.results-more {
+    display: flex;
+    justify-content: center;
+    margin-top: 32px;
+}
+
+.results-state {
+    max-width: 520px;
+    padding: 48px 0;
+}
+
+.results-state h2 {
+    margin-bottom: 8px;
+    font: 600 22px/1.25 var(--font-display);
+    letter-spacing: -0.015em;
+}
+
+.results-state p {
+    margin-bottom: 16px;
+    color: var(--text2);
+    font-size: 15px;
+    line-height: 1.55;
+}
+
+.results-recent-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    max-width: 720px;
+    margin-bottom: 12px;
+}
+
+.results-recent-head h2 {
+    font: 600 16px/1.2 var(--font-body);
+}
+
+.results-link {
+    padding: 6px 4px;
+    background: none;
+    border: none;
+    color: var(--text2);
+    font: 500 13px/1 var(--font-body);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+.results-link:hover {
+    color: var(--text);
+}
+
+.results-chips {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    max-width: 720px;
+}
+
+.results-chip {
+    display: flex;
+    align-items: center;
+    border-radius: var(--radius);
+    background: var(--surface);
+}
+
+.results-chip-term {
+    min-height: 40px;
+    padding: 0 6px 0 14px;
+    background: none;
+    border: none;
+    color: var(--text);
+    font: 500 14px/1 var(--font-body);
+}
+
+.results-chip-remove {
+    width: 36px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--text3);
+}
+
+.results-chip-remove:hover {
+    color: var(--text);
+}
+
+.results-chip-remove svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* ── Player ──────────────────────────────────────────────────────────────── */
+.player-wrap {
+    border: none;
+    border-radius: var(--radius-art);
+}
+
+/* ── Modals, menus, inputs: same type and radius as the rest ─────────────── */
+.modal-overlay {
+    background: color-mix(in srgb, #000 72%, transparent);
+}
+
+.context-menu {
+    padding: 4px;
+    border-radius: var(--radius);
+}
+
+.context-menu-item {
+    border-radius: var(--radius-sm);
+    font: 500 13px/1.2 var(--font-body);
+}
+
+input,
+select,
+textarea {
+    font-family: var(--font-body);
+}
+
+/* ── Phones (mobile.css turns the sidebar into a bottom tab bar) ─────────── */
+/* mobile.css loads after this file, so phone rules that must beat it are
+   scoped under .main / .sidebar for one extra level of specificity. */
+@media (max-width: 768px) {
+    :root {
+        --gutter: 16px;
+    }
+
+    .main .hero {
+        height: auto;
+        min-height: 0;
+    }
+
+    .main .hero-content {
+        max-width: none;
+        padding: 38vh var(--gutter) 20px;
+    }
+
+    .main .section {
+        padding: 0 var(--gutter);
+        margin-bottom: 32px;
+    }
+
+    .main .section-head {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+    }
+
+    .main .section-title {
+        font-size: 20px;
+    }
+
+    .sidebar .sidebar-btn.active,
+    .sidebar .sidebar-btn:hover {
+        box-shadow: none;
+    }
+
+    .sidebar-wordmark,
+    .sidebar-heading,
+    .saved-thumb-text,
+    .sidebar-badge:empty {
+        display: none;
+    }
+
+    .sidebar-btn-icon {
+        display: flex;
+    }
+
+    /* Short labels under each tab icon. */
+    .sidebar-btn-label {
+        font: 500 10px/1 var(--font-body);
+    }
+
+    .sidebar-btn.active {
+        color: var(--red);
+        background: none;
+    }
+
+    .sidebar-btn--back,
+    .sidebar-btn--mode {
+        display: none;
+    }
+
+    .sidebar-badge {
+        position: absolute;
+        top: 6px;
+        right: calc(50% - 20px);
+        min-width: 16px;
+        height: 16px;
+        padding: 0 4px;
+        border-radius: 8px;
+        background: var(--red);
+        color: #fff;
+        font: 600 10px/16px var(--font-body);
+    }
+
+    .sidebar-bottom {
+        display: flex;
+        flex: 2;
+        margin-top: 0;
+    }
+
+    .hero {
+        min-height: 0;
+        height: auto;
+    }
+
+    .hero-gradient {
+        background: linear-gradient(
+            to top,
+            var(--bg) 0%,
+            color-mix(in srgb, var(--bg) 70%, transparent) 45%,
+            transparent 75%
+        );
+    }
+
+    .hero-title {
+        font-size: clamp(34px, 10vw, 48px);
+    }
+
+    .hero-search-wrap {
+        width: 100%;
+    }
+
+    .results-filters {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .filter-reset {
+        grid-column: 1 / -1;
+    }
+
+    .results-grid {
+        grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+        gap: 18px 10px;
+    }
+
+    .spotlight-tile {
+        width: 120px;
+    }
+
+    .detail-gradient {
+        background: linear-gradient(to top, var(--bg) 0%, transparent 70%);
+    }
+
+    .poster-row-track {
+        grid-auto-columns: 128px;
+    }
+
+    .row-arrow {
+        display: none;
+    }
+}

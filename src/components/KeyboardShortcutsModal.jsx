@@ -55,11 +55,12 @@ export default function KeyboardShortcutsModal({ onClose }) {
             style={{
               fontFamily: "var(--font-display)",
               fontSize: 22,
-              letterSpacing: 1,
+              fontWeight: 600,
+              letterSpacing: "-0.015em",
               color: "var(--text)",
             }}
           >
-            KEYBOARD SHORTCUTS
+            Keyboard shortcuts
           </div>
           <button
             onClick={onClose}
