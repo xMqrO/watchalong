@@ -1,9 +1,39 @@
-// Subtitle helpers for the CNO player: fetch the OpenSubtitles list, group it
-// by language, download + parse VTT files, and find the active cue.
+// Subtitle helpers for the CNO player: fetch the subtitle list, group it by
+// language, download + parse SRT/VTT files, and find the active cue.
 
 const cueCache = new Map();
 
-export async function fetchSubtitleList({ type, imdbId, tmdbId, season, episode }) {
+// Wyzie Subs is called from the viewer's browser: OpenSubtitles blocks
+// Vercel's server IPs, so the server route only works locally/desktop.
+const WYZIE_KEY = import.meta.env?.VITE_WYZIE_KEY || "";
+
+async function fetchWyzie({ type, tmdbId, season, episode }) {
+  const qs = new URLSearchParams({ id: String(tmdbId), key: WYZIE_KEY });
+  if (type === "tv") {
+    qs.set("season", String(season || 1));
+    qs.set("episode", String(episode || 1));
+  }
+  const res = await fetch(`https://sub.wyzie.io/search?${qs}`);
+  if (!res.ok) throw new Error(`wyzie ${res.status}`);
+  const data = await res.json();
+  if (!Array.isArray(data)) throw new Error("wyzie bad response");
+  return data
+    .filter((s) => s.url && (s.format === "srt" || s.format === "vtt"))
+    .map((s) => ({
+      label: s.display || s.language,
+      lang: s.language,
+      url: s.url,
+      format: s.format,
+      release: s.release || s.fileName || "",
+      downloads: Number(s.downloadCount || 0),
+      ai: s.source === "ai",
+      hearingImpaired: !!s.isHearingImpaired,
+    }))
+    // Human-made subtitles first, most downloaded first; AI translations last.
+    .sort((a, b) => (a.ai - b.ai) || (b.downloads - a.downloads));
+}
+
+async function fetchOpenSubtitles({ type, imdbId, tmdbId, season, episode }) {
   if (!imdbId && !tmdbId) return [];
   const qs = new URLSearchParams({ type, lang: "all" });
   if (imdbId) qs.set("imdb_id", imdbId);
@@ -15,6 +45,18 @@ export async function fetchSubtitleList({ type, imdbId, tmdbId, season, episode 
   const res = await fetch(`/api/subtitles?${qs}`);
   const data = await res.json();
   return data.ok && Array.isArray(data.tracks) ? data.tracks : [];
+}
+
+export async function fetchSubtitleList(params) {
+  if (WYZIE_KEY && params.tmdbId) {
+    try {
+      const tracks = await fetchWyzie(params);
+      if (tracks.length) return tracks;
+    } catch (err) {
+      console.warn("[CnoPlayer] Wyzie subtitles failed, trying OpenSubtitles:", err.message);
+    }
+  }
+  return fetchOpenSubtitles(params);
 }
 
 // [{ lang, label, versions: [track, ...] }] — versions keep the server's

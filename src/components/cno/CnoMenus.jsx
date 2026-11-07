@@ -151,7 +151,12 @@ function SubtitlesPanel() {
             key={v.url}
             checkCol
             label={i === 0 ? "Best match" : `Version ${i + 1}`}
-            sub={`${v.release || "Unknown release"} · ${v.downloads.toLocaleString()} downloads`}
+            sub={[
+              v.ai ? "AI translated" : null,
+              v.hearingImpaired ? "SDH" : null,
+              v.release || "Unknown release",
+              v.downloads ? `${v.downloads.toLocaleString()} downloads` : null,
+            ].filter(Boolean).join(" · ")}
             checked={primary?.url === v.url}
             onClick={() => { ui.setPrimaryVersion(v.url); back(); }}
           />
