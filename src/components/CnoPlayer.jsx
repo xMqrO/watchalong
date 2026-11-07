@@ -24,6 +24,8 @@ export default function CnoPlayer({
   season,
   episode,
   progressKey,
+  imdbId,
+  tmdbId,
   onTimeUpdate,
   onLoaded,
 }) {
@@ -31,6 +33,8 @@ export default function CnoPlayer({
   const hlsRef = useRef(null);
   const [status, setStatus] = useState("resolving");
   const [errorMsg, setErrorMsg] = useState(null);
+  const [subtitleTracks, setSubtitleTracks] = useState([]);
+  const [activeTrack, setActiveTrack] = useState(null);
   const resolvedRef = useRef(false);
 
   const cleanup = useCallback(() => {
@@ -39,6 +43,48 @@ export default function CnoPlayer({
       hlsRef.current = null;
     }
   }, []);
+
+  // Fetch subtitles once we have an id
+  useEffect(() => {
+    if (!imdbId && !tmdbId) return;
+    const qs = new URLSearchParams({ type, lang: "en" });
+    if (imdbId) qs.set("imdb_id", imdbId);
+    else qs.set("tmdb_id", String(tmdbId));
+    if (type === "tv") {
+      qs.set("season", String(season || 1));
+      qs.set("episode", String(episode || 1));
+    }
+    fetch(`/api/subtitles?${qs}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.ok && data.tracks?.length > 0) {
+          setSubtitleTracks(data.tracks);
+        }
+      })
+      .catch(() => {});
+  }, [imdbId, tmdbId, type, season, episode]);
+
+  // Inject/swap subtitle track on video element
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    // Remove existing managed tracks
+    Array.from(video.querySelectorAll("track[data-cno]")).forEach((t) => t.remove());
+    if (!activeTrack) return;
+    const track = document.createElement("track");
+    track.setAttribute("data-cno", "1");
+    track.kind = "subtitles";
+    track.label = activeTrack.label;
+    track.srclang = activeTrack.lang;
+    track.src = activeTrack.url;
+    track.default = true;
+    video.appendChild(track);
+    // Force enable
+    setTimeout(() => {
+      const t = video.textTracks[video.textTracks.length - 1];
+      if (t) t.mode = "showing";
+    }, 300);
+  }, [activeTrack]);
 
   useEffect(() => {
     resolvedRef.current = false;
@@ -94,9 +140,7 @@ export default function CnoPlayer({
       const savedTime = Number(storage.get("dlTime_" + progressKey) || 0);
       const startAt = savedTime > 5 ? Math.max(0, savedTime - 5) : 0;
 
-      console.log("[CnoPlayer] UA:", navigator.userAgent);
       const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-      console.log("[CnoPlayer] isSafari:", isSafari, "canPlay:", video.canPlayType("application/vnd.apple.mpegurl"));
       if (isSafari && video.canPlayType("application/vnd.apple.mpegurl")) {
         video.src = playlistUrl;
         if (startAt > 0) {
@@ -210,6 +254,30 @@ export default function CnoPlayer({
           <span style={{ fontSize: 28 }}>⚠️</span>
           <span style={{ fontSize: 14, color: "var(--text2)" }}>CNO stream unavailable</span>
           <span style={{ fontSize: 12, color: "var(--text3)" }}>{errorMsg}</span>
+        </div>
+      )}
+      {/* Subtitle selector */}
+      {status === "playing" && subtitleTracks.length > 0 && (
+        <div style={{
+          position: "absolute", bottom: 52, right: 12, zIndex: 10,
+          display: "flex", alignItems: "center", gap: 6,
+        }}>
+          <select
+            value={activeTrack?.url || ""}
+            onChange={(e) => {
+              const track = subtitleTracks.find((t) => t.url === e.target.value) || null;
+              setActiveTrack(track);
+            }}
+            style={{
+              background: "rgba(0,0,0,0.75)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)",
+              borderRadius: 4, padding: "3px 6px", fontSize: 12, cursor: "pointer",
+            }}
+          >
+            <option value="">Subtitles off</option>
+            {subtitleTracks.map((t, i) => (
+              <option key={i} value={t.url}>{t.label}</option>
+            ))}
+          </select>
         </div>
       )}
       <video

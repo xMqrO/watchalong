@@ -1134,6 +1134,91 @@ function extractM3u8FromCnoResponse(data) {
   return null;
 }
 
+const OS_UA = "TemporaryUserAgent";
+const subtitleCache = new Map();
+
+function srtToVtt(srt) {
+  return "WEBVTT\n\n" + srt
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2")
+    .trim();
+}
+
+async function handleSubtitles(req, res) {
+  if (req.method !== "GET") return sendJson(res, 405, { error: "Method not allowed" });
+  const q = new URL(req.url, "http://local").searchParams;
+  const imdbId = q.get("imdb_id");
+  const lang = q.get("lang") || "en";
+  const type = q.get("type") || "movie";
+  const season = q.get("season") || "1";
+  const episode = q.get("episode") || "1";
+  const dl = q.get("dl"); // if set, proxy-download that subtitle URL as VTT
+
+  if (dl) {
+    const cacheKey = `dl_${dl}`;
+    if (subtitleCache.has(cacheKey)) {
+      res.writeHead(200, { "Content-Type": "text/vtt; charset=utf-8", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=86400" });
+      res.end(subtitleCache.get(cacheKey));
+      return;
+    }
+    try {
+      const r = await fetch(dl, { headers: { "User-Agent": OS_UA }, signal: AbortSignal.timeout(10000) });
+      if (!r.ok) return sendJson(res, 502, { error: `subtitle fetch ${r.status}` });
+      const text = await r.text();
+      const vtt = text.trimStart().startsWith("WEBVTT") ? text : srtToVtt(text);
+      subtitleCache.set(cacheKey, vtt);
+      res.writeHead(200, { "Content-Type": "text/vtt; charset=utf-8", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=86400" });
+      res.end(vtt);
+    } catch (err) {
+      sendJson(res, 502, { error: err.message });
+    }
+    return;
+  }
+
+  const tmdbId = q.get("tmdb_id");
+  if (!imdbId && !tmdbId) return sendJson(res, 400, { error: "imdb_id or tmdb_id required" });
+
+  const cacheKey = `search_${imdbId || tmdbId}_${lang}_${type}_${season}_${episode}`;
+  if (subtitleCache.has(cacheKey)) return sendJson(res, 200, subtitleCache.get(cacheKey));
+
+  try {
+    const langCode = lang === "en" ? "eng" : lang;
+    const idPart = imdbId
+      ? `imdbid-${imdbId.replace("tt", "")}`
+      : `tmdbid-${tmdbId}`;
+    const searchUrl = type === "tv"
+      ? `https://rest.opensubtitles.org/search/${idPart}/sublanguageid-${langCode}/season-${season}/episode-${episode}`
+      : `https://rest.opensubtitles.org/search/${idPart}/sublanguageid-${langCode}`;
+
+    const r = await fetch(searchUrl, {
+      headers: { "X-User-Agent": OS_UA, "User-Agent": OS_UA },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!r.ok) return sendJson(res, 200, { ok: false, error: `opensubtitles ${r.status}` });
+
+    const results = await r.json();
+    if (!Array.isArray(results) || results.length === 0) {
+      return sendJson(res, 200, { ok: false, error: "No subtitles found" });
+    }
+
+    const origin = requestOrigin(req);
+    const tracks = results.slice(0, 10).map((s) => ({
+      label: s.LanguageName || lang,
+      lang: s.SubLanguageID || lang,
+      url: `${origin}/api/subtitles?dl=${encodeURIComponent(s.SubDownloadLink)}&imdb_id=${imdbId}`,
+      format: s.SubFormat || "srt",
+    }));
+
+    const result = { ok: true, tracks };
+    subtitleCache.set(cacheKey, result);
+    setTimeout(() => subtitleCache.delete(cacheKey), 30 * 60 * 1000);
+    return sendJson(res, 200, result);
+  } catch (err) {
+    return sendJson(res, 200, { ok: false, error: err.message });
+  }
+}
+
 async function handleCnoResolve(req, res) {
   if (req.method !== "GET") return sendJson(res, 405, { error: "Method not allowed" });
   const q = new URL(req.url, "http://local").searchParams;
@@ -1251,6 +1336,11 @@ export async function handleApiRequest(req, res) {
 
     if (url.startsWith("/api/cno/resolve")) {
       await handleCnoResolve(req, res);
+      return true;
+    }
+
+    if (url.startsWith("/api/subtitles")) {
+      await handleSubtitles(req, res);
       return true;
     }
 

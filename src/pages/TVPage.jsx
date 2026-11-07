@@ -2456,6 +2456,7 @@ Episode not found on this source
                   <CnoPlayer
                     type="tv"
                     id={item.id}
+                    tmdbId={item.id}
                     season={selectedSeason}
                     episode={selectedEp?.episode_number}
                     progressKey={`tv_${item.id}_s${selectedSeason}_e${selectedEp?.episode_number}`}

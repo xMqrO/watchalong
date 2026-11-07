@@ -1331,6 +1331,7 @@ Movie not found on this source
               <CnoPlayer
                 type="movie"
                 id={item.id}
+                imdbId={details?.imdb_id || ""}
                 progressKey={`movie_${item.id}`}
                 onTimeUpdate={({ currentTime, duration }) => {
                   if (saveProgress) saveProgress(currentTime, duration);
