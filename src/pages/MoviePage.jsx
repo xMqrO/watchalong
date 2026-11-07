@@ -1333,11 +1333,14 @@ Movie not found on this source
                 id={item.id}
                 imdbId={details?.imdb_id || ""}
                 tmdbId={item.id}
+                title={title}
+                poster={d.backdrop_path ? imgUrl(d.backdrop_path, "w1280") : undefined}
                 progressKey={`movie_${item.id}`}
                 onTimeUpdate={({ currentTime, duration }) => {
                   if (saveProgress) saveProgress(currentTime, duration);
                 }}
                 onLoaded={() => setWebviewLoading(false)}
+                onDownload={() => setShowDownload(true)}
               />
             ) : (
               <iframe

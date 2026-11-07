@@ -1224,12 +1224,22 @@ async function handleSubtitles(req, res) {
     }
 
     const origin = requestOrigin(req);
-    const tracks = results.slice(0, 10).map((s) => ({
-      label: s.LanguageName || lang,
-      lang: s.SubLanguageID || lang,
-      url: `${origin}/api/subtitles?dl=${encodeURIComponent(s.SubDownloadLink)}&imdb_id=${imdbId}`,
-      format: s.SubFormat || "srt",
-    }));
+    // lang=all feeds the CNO player's language/version picker, so it gets
+    // every result; single-language callers keep the old top-10 behaviour.
+    const limit = lang === "all" ? 400 : 10;
+    const tracks = results
+      .slice()
+      .sort((a, b) => Number(b.SubDownloadsCnt || 0) - Number(a.SubDownloadsCnt || 0))
+      .slice(0, limit)
+      .map((s) => ({
+        label: s.LanguageName || lang,
+        lang: s.SubLanguageID || lang,
+        iso: s.ISO639 || "",
+        url: `${origin}/api/subtitles?dl=${encodeURIComponent(s.SubDownloadLink)}&imdb_id=${resolvedImdbId}`,
+        format: s.SubFormat || "srt",
+        release: s.MovieReleaseName || s.SubFileName || "",
+        downloads: Number(s.SubDownloadsCnt || 0),
+      }));
 
     const result = { ok: true, tracks };
     subtitleCache.set(cacheKey, result);

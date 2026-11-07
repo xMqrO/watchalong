@@ -2457,6 +2457,8 @@ Episode not found on this source
                     type="tv"
                     id={item.id}
                     tmdbId={item.id}
+                    title={selectedEp ? `${title} · S${selectedSeason}E${selectedEp.episode_number}` : title}
+                    poster={d.backdrop_path ? imgUrl(d.backdrop_path, "w1280") : undefined}
                     season={selectedSeason}
                     episode={selectedEp?.episode_number}
                     progressKey={`tv_${item.id}_s${selectedSeason}_e${selectedEp?.episode_number}`}
@@ -2464,6 +2466,7 @@ Episode not found on this source
                       if (saveProgress) saveProgress(currentTime, duration);
                     }}
                     onLoaded={() => setWebviewLoading(false)}
+                    onDownload={() => setShowDownload(true)}
                   />
                 ) : (
                   <iframe
