@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
+import { gunzipSync } from "node:zlib";
 import { resolveProviderStream, PROVIDER_DEFS } from "./providers.js";
 import {
   stripAdsFromPlaylist,
@@ -1165,7 +1166,9 @@ async function handleSubtitles(req, res) {
     try {
       const r = await fetch(dl, { headers: { "User-Agent": OS_UA }, signal: AbortSignal.timeout(10000) });
       if (!r.ok) return sendJson(res, 502, { error: `subtitle fetch ${r.status}` });
-      const text = await r.text();
+      let buf = Buffer.from(await r.arrayBuffer());
+      if (buf[0] === 0x1f && buf[1] === 0x8b) buf = gunzipSync(buf);
+      const text = buf.toString("utf8");
       const vtt = text.trimStart().startsWith("WEBVTT") ? text : srtToVtt(text);
       subtitleCache.set(cacheKey, vtt);
       res.writeHead(200, { "Content-Type": "text/vtt; charset=utf-8", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=86400" });
