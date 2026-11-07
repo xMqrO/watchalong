@@ -197,8 +197,10 @@ export default function MoviePage({
   const mediaName = `${title}${year ? " (" + year + ")" : ""}`;
 
   const { watchedSecs, totalSecs, displayPct, progressLabel } = useMemo(() => {
-    const watchedSecs = storage.get("dlTime_" + progressKey) || 0;
     const totalSecs = d?.runtime ? d.runtime * 60 : 0;
+    // Older saves from the wall-clock estimate could exceed the runtime.
+    const savedSecs = Number(storage.get("dlTime_" + progressKey) || 0);
+    const watchedSecs = totalSecs > 0 ? Math.min(savedSecs, totalSecs) : savedSecs;
     const derivedPct =
       watchedSecs > 0 && totalSecs > 0
         ? Math.floor((watchedSecs / totalSecs) * 100)
@@ -232,6 +234,7 @@ export default function MoviePage({
   const autoMarkedRef = useRef(false);
   // Tracks last known playback position, used to detect resolution-change resets
   const lastKnownTimeRef = useRef(0);
+  const cnoLastSaveRef = useRef(0); // throttles CNO player progress saves
   const lastKnownDurationRef = useRef(0); // real duration when the player reports it
   // Timestamp until which we ignore reset detection (post-seekback cooldown)
   const seekBackCooldownRef = useRef(0);
@@ -775,7 +778,8 @@ export default function MoviePage({
               // time since it was observed. While `fallbackBaseAtRef` is 0 the
               // player iframe is still loading, so we hold at the resume
               // anchor (no advancing) instead of counting buffer time.
-              const estimated =
+              const totalSecs = d?.runtime ? d.runtime * 60 : 0;
+              const rawEstimate =
                 fallbackBaseAtRef.current === 0
                   ? fallbackBaseSecRef.current
                   : fallbackBaseSecRef.current +
@@ -783,7 +787,10 @@ export default function MoviePage({
                       0,
                       (Date.now() - fallbackBaseAtRef.current) / 1000,
                     );
-              const totalSecs = d?.runtime ? d.runtime * 60 : 0;
+              // Wall time keeps running while paused or idle, so never let
+              // the estimate run past the end of the movie.
+              const estimated =
+                totalSecs > 0 ? Math.min(rawEstimate, totalSecs) : rawEstimate;
               lastKnownTimeRef.current = estimated;
               if (totalSecs > 0) {
                 const p = Math.floor((estimated / totalSecs) * 100);
@@ -1337,7 +1344,26 @@ Movie not found on this source
                 poster={d.backdrop_path ? imgUrl(d.backdrop_path, "w1280") : undefined}
                 progressKey={`movie_${item.id}`}
                 onTimeUpdate={({ currentTime, duration }) => {
-                  if (saveProgress) saveProgress(currentTime, duration);
+                  if (!(duration > 0)) return;
+                  lastKnownTimeRef.current = currentTime;
+                  lastKnownDurationRef.current = duration;
+                  const now = Date.now();
+                  if (now - cnoLastSaveRef.current < 2000) return;
+                  cnoLastSaveRef.current = now;
+                  saveProgressRef.current(
+                    progressKey,
+                    Math.min(100, Math.floor((currentTime / duration) * 100)),
+                  );
+                  storage.set("dlTime_" + progressKey, Math.floor(currentTime));
+                  const remaining = duration - currentTime;
+                  if (
+                    !autoMarkedRef.current &&
+                    remaining >= 0 &&
+                    remaining <= watchedThreshold
+                  ) {
+                    autoMarkedRef.current = true;
+                    onMarkWatchedRef.current?.(progressKey);
+                  }
                 }}
                 onLoaded={() => setWebviewLoading(false)}
                 onDownload={() => setShowDownload(true)}
@@ -1487,7 +1513,7 @@ Movie not found on this source
               {!movieDownload && m3u8Url && (
                 <span className="player-overlay-dot" />
               )}
-              {!sourceSupportsProgress(playerSource) && (
+              {!sourceSupportsProgress(playerSource) && !isNativePlayer && (
                 <span
                   className="player-no-progress-hint"
                   title="No automatic progress tracking for this source"

@@ -536,6 +536,7 @@ export default function TVPage({
   );
   const autoMarkedRef = useRef(false);
   const lastKnownTimeRef = useRef(0);
+  const cnoLastSaveRef = useRef(0); // throttles CNO player progress saves
   const lastKnownDurationRef = useRef(0); // real duration when the player reports it
   const durationRef = useRef(0); // tracked for AniSkip progress bar markers
   const seekBackCooldownRef = useRef(0);
@@ -1543,7 +1544,9 @@ export default function TVPage({
               // time since it was observed. While `fallbackBaseAtRef` is 0 the
               // player iframe is still loading, so we hold at the resume
               // anchor (no advancing) instead of counting buffer time.
-              const estimated =
+              const minutes = Number(d?.episode_run_time?.[0]) || 0;
+              const durationSec = minutes > 0 ? minutes * 60 : 0;
+              const rawEstimate =
                 fallbackBaseAtRef.current === 0
                   ? fallbackBaseSecRef.current
                   : fallbackBaseSecRef.current +
@@ -1551,8 +1554,10 @@ export default function TVPage({
                       0,
                       (Date.now() - fallbackBaseAtRef.current) / 1000,
                     );
-              const minutes = Number(d?.episode_run_time?.[0]) || 0;
-              const durationSec = minutes > 0 ? minutes * 60 : 0;
+              // Wall time keeps running while paused or idle, so never let
+              // the estimate run past the end of the episode.
+              const estimated =
+                durationSec > 0 ? Math.min(rawEstimate, durationSec) : rawEstimate;
               lastKnownTimeRef.current = estimated;
               if (durationSec > 0) {
                 durationRef.current = durationSec;
@@ -2463,7 +2468,26 @@ Episode not found on this source
                     episode={selectedEp?.episode_number}
                     progressKey={`tv_${item.id}_s${selectedSeason}_e${selectedEp?.episode_number}`}
                     onTimeUpdate={({ currentTime, duration }) => {
-                      if (saveProgress) saveProgress(currentTime, duration);
+                      if (!(duration > 0) || !currentProgressKey) return;
+                      lastKnownTimeRef.current = currentTime;
+                      durationRef.current = duration;
+                      const now = Date.now();
+                      if (now - cnoLastSaveRef.current < 2000) return;
+                      cnoLastSaveRef.current = now;
+                      saveProgressRef.current(
+                        currentProgressKey,
+                        Math.min(100, Math.floor((currentTime / duration) * 100)),
+                      );
+                      storage.set("dlTime_" + currentProgressKey, Math.floor(currentTime));
+                      const remaining = duration - currentTime;
+                      if (
+                        !autoMarkedRef.current &&
+                        remaining >= 0 &&
+                        remaining <= watchedThreshold
+                      ) {
+                        autoMarkedRef.current = true;
+                        onMarkWatchedRef.current?.(currentProgressKey);
+                      }
                     }}
                     onLoaded={() => setWebviewLoading(false)}
                     onDownload={() => setShowDownload(true)}
@@ -2637,7 +2661,7 @@ Episode not found on this source
                   {!currentEpDownload && m3u8Url && (
                     <span className="player-overlay-dot" />
                   )}
-                  {!supportsProgress && (
+                  {!supportsProgress && !isNativePlayer && (
                     <span
                       className="player-no-progress-hint"
                       title="No automatic progress tracking for this source"
