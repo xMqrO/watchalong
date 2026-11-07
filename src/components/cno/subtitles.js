@@ -29,8 +29,10 @@ async function fetchWyzie({ type, tmdbId, season, episode }) {
       ai: s.source === "ai",
       hearingImpaired: !!s.isHearingImpaired,
     }))
-    // Human-made subtitles first, most downloaded first; AI translations last.
-    .sort((a, b) => (a.ai - b.ai) || (b.downloads - a.downloads));
+    // Human-made, non-SDH subtitles first (SDH files caption sounds like
+    // "[MUSIC PLAYING]" when nobody is talking), most downloaded first;
+    // AI translations last.
+    .sort((a, b) => (a.ai - b.ai) || (a.hearingImpaired - b.hearingImpaired) || (b.downloads - a.downloads));
 }
 
 async function fetchOpenSubtitles({ type, imdbId, tmdbId, season, episode }) {
