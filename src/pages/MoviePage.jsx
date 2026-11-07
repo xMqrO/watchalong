@@ -1332,6 +1332,7 @@ Movie not found on this source
                 type="movie"
                 id={item.id}
                 imdbId={details?.imdb_id || ""}
+                tmdbId={item.id}
                 progressKey={`movie_${item.id}`}
                 onTimeUpdate={({ currentTime, duration }) => {
                   if (saveProgress) saveProgress(currentTime, duration);

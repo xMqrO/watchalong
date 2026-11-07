@@ -1183,10 +1183,28 @@ async function handleSubtitles(req, res) {
   if (subtitleCache.has(cacheKey)) return sendJson(res, 200, subtitleCache.get(cacheKey));
 
   try {
+    // Resolve TMDB id → IMDB id if needed
+    let resolvedImdbId = imdbId;
+    if (!resolvedImdbId && tmdbId && CONFIG.TMDB_TOKEN) {
+      const extPath = type === "tv"
+        ? `/tv/${tmdbId}/external_ids`
+        : `/movie/${tmdbId}/external_ids`;
+      try {
+        const extRes = await fetch(`${TMDB_API}${extPath}`, {
+          headers: { Authorization: `Bearer ${CONFIG.TMDB_TOKEN}` },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (extRes.ok) {
+          const extData = await extRes.json();
+          resolvedImdbId = extData.imdb_id || null;
+        }
+      } catch {}
+    }
+
+    if (!resolvedImdbId) return sendJson(res, 200, { ok: false, error: "Could not resolve IMDB ID for subtitle search" });
+
     const langCode = lang === "en" ? "eng" : lang;
-    const idPart = imdbId
-      ? `imdbid-${imdbId.replace("tt", "")}`
-      : `tmdbid-${tmdbId}`;
+    const idPart = `imdbid-${resolvedImdbId.replace("tt", "")}`;
     const searchUrl = type === "tv"
       ? `https://rest.opensubtitles.org/search/${idPart}/sublanguageid-${langCode}/season-${season}/episode-${episode}`
       : `https://rest.opensubtitles.org/search/${idPart}/sublanguageid-${langCode}`;

@@ -46,7 +46,8 @@ export default function CnoPlayer({
 
   // Fetch subtitles once we have an id
   useEffect(() => {
-    if (!imdbId && !tmdbId) return;
+    const effectiveId = imdbId || tmdbId;
+    if (!effectiveId) return;
     const qs = new URLSearchParams({ type, lang: "en" });
     if (imdbId) qs.set("imdb_id", imdbId);
     else qs.set("tmdb_id", String(tmdbId));
