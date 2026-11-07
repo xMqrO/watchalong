@@ -167,7 +167,7 @@ params: {
   },
   {
     id: "vixsrc",
-    label: "VixSrc",
+    label: "Stable",
     tag: null,
     note: null,
     supportsProgress: true,
@@ -401,6 +401,20 @@ params: {},
     movieUrl: (id) => `https://vidsrc.pm/embed/movie/${id}`,
     tvUrl: (id, season, ep) =>
       `https://vidsrc.pm/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "cno",
+    label: "CNO",
+    tag: "4K",
+    note: null,
+    supportsProgress: false,
+    async: false,
+    serverResolved: false,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://cno.to/movie/${id}`,
+    tvUrl: (id, season, ep) => `https://cno.to/tv/${id}/${season}/${ep}`,
   },
 ];
 
@@ -783,7 +797,7 @@ export const isAnimeContent = (item, details) => {
 // Default source: the reliable, clean, server-resolved one (vidfast is the only
 // host with a validated HLS resolver). Failover still walks server-resolved
 // sources if this one goes down.
-export const NON_ANIME_DEFAULT_SOURCE = "vidfast";
+export const NON_ANIME_DEFAULT_SOURCE = "vixsrc";
 
 // ── Episode Group fetch (localStorage + in-memory cache, 7-day TTL) ─────────
 // Episode groups almost never change -> cache aggressively across sessions.

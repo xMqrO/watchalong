@@ -69,6 +69,7 @@ import {
 } from "../utils/playerGamepadScript";
 import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
 import { useRedirectShield } from "../utils/useRedirectShield";
+import CnoPlayer from "../components/CnoPlayer";
 
 const EMBED_FALLBACK_TIMEOUT_MS = 12000;
 // How long to give a server-resolved embed to show real playback (OnVid proof)
@@ -153,6 +154,8 @@ export default function MoviePage({
   const embedFallbackActiveRef = useRef(false);
   // True when the source must be resolved server-side (async sources).
   const isAsync = useMemo(() => sourceIsAsync(playerSource), [playerSource]);
+  // Sources that render their own native player component — bypass all iframe/embed logic.
+  const isNativePlayer = playerSource === "cno";
   // Set when a real OnVid playback read comes back (proves the embed actually
   // started streaming); used to cancel the embed → server failover timer.
   const embeddingProofRef = useRef(false);
@@ -335,7 +338,7 @@ export default function MoviePage({
 
   // Resolve AllManga movie URL via main-process IPC
   useEffect(() => {
-    if (!playing) return;
+    if (!playing || isNativePlayer) return;
     const epKey = `movie_${item.id}_${dubMode}`;
 
     // Embed-first sources fall back to the same source's server resolver when
@@ -453,7 +456,7 @@ export default function MoviePage({
   // dead (e.g. VidLink returning an empty player). So we also require a real
   // playback proof within a grace window before trusting the embed.
   useEffect(() => {
-    if (!playing || isAsync || embedFallbackActiveRef.current) return;
+    if (!playing || isAsync || isNativePlayer || embedFallbackActiveRef.current) return;
     if (resolvedPlayerUrlRef.current) return;
     const epKey = `movie_${item.id}_${dubMode}`;
     if (shouldServerFirstEmbed(playerSource, epKey)) return;
@@ -1324,55 +1327,64 @@ Movie not found on this source
                 </button>
               </div>
             )}
-            <iframe
-              ref={webviewRef}
-              src={shield.blocked ? "about:blank" : realPlayerSrc}
-              title={`${title} player`}
-              allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-              allowFullScreen
-              referrerPolicy={
-                isAsync ? "no-referrer" : sourceReferrerPolicy(playerSource)
-              }
-              sandbox={isAsync ? undefined : sourceSandbox(playerSource)}
-              onLoad={() => {
-                setWebviewLoading(false);
-                embedLoadFiredRef.current = true;
-                shield.onPlayerLoad();
-                // Unfreeze the wall-clock fallback anchor now that the player
-                // iframe has loaded, so buffer/load time isn't counted as
-                // watched (keeps the resume rewind honest).
-                if (fallbackBaseAtRef.current === 0)
-                  fallbackBaseAtRef.current = Date.now();
-                if (!isAsync) {
-                  clearEmbedServerFirst(
-                    playerSource,
-                    `movie_${item.id}_${dubMode}`,
-                  );
+            {playerSource === "cno" ? (
+              <CnoPlayer
+                type="movie"
+                id={item.id}
+                progressKey={`movie_${item.id}`}
+                onTimeUpdate={({ currentTime, duration }) => {
+                  if (saveProgress) saveProgress(currentTime, duration);
+                }}
+                onLoaded={() => setWebviewLoading(false)}
+              />
+            ) : (
+              <iframe
+                ref={webviewRef}
+                src={shield.blocked ? "about:blank" : realPlayerSrc}
+                title={`${title} player`}
+                allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+                allowFullScreen
+                referrerPolicy={
+                  isAsync ? "no-referrer" : sourceReferrerPolicy(playerSource)
                 }
-              }}
-              onError={() => {
-                setWebviewLoading(false);
-                if (!isAsync) {
-                  markEmbedServerFirst(playerSource, `movie_${item.id}_${dubMode}`);
-                  embedFallbackActiveRef.current = true;
-                  setEmbedFallbackActive(true);
-                }
-              }}
-              style={{
-                position: "absolute",
-                inset: 0,
-                width: "100%",
-                height: "100%",
-                border: "none",
-                background: "#000",
-                visibility:
-                  webviewLoading ||
-                  ((isAsync || embedFallbackActive) &&
-                    !resolvedPlayerUrl)
-                    ? "hidden"
-                    : "visible",
-              }}
-            />
+                sandbox={isAsync ? undefined : sourceSandbox(playerSource)}
+                onLoad={() => {
+                  setWebviewLoading(false);
+                  embedLoadFiredRef.current = true;
+                  shield.onPlayerLoad();
+                  if (fallbackBaseAtRef.current === 0)
+                    fallbackBaseAtRef.current = Date.now();
+                  if (!isAsync) {
+                    clearEmbedServerFirst(
+                      playerSource,
+                      `movie_${item.id}_${dubMode}`,
+                    );
+                  }
+                }}
+                onError={() => {
+                  setWebviewLoading(false);
+                  if (!isAsync) {
+                    markEmbedServerFirst(playerSource, `movie_${item.id}_${dubMode}`);
+                    embedFallbackActiveRef.current = true;
+                    setEmbedFallbackActive(true);
+                  }
+                }}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  border: "none",
+                  background: "#000",
+                  visibility:
+                    webviewLoading ||
+                    ((isAsync || embedFallbackActive) &&
+                      !resolvedPlayerUrl)
+                      ? "hidden"
+                      : "visible",
+                }}
+              />
+            )}
             {/* Left-side overlay button group, flex row, no fixed px offsets */}
             <div className="player-overlay-group">
               <button

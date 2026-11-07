@@ -83,6 +83,7 @@ import {
 } from "../utils/playerGamepadScript";
 import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
 import { useRedirectShield } from "../utils/useRedirectShield";
+import CnoPlayer from "../components/CnoPlayer";
 
 // ── Partial-circle progress icon (cached per pct tier) ───────────────────────
 // Uses a single SVG arc. Three instances (25/50/75)
@@ -425,6 +426,7 @@ export default function TVPage({
   const [showSourceMenu, setShowSourceMenu] = useState(false);
   // Derived from playerSource, computed once per render instead of 5-6× inline
   const isAsync = useMemo(() => sourceIsAsync(playerSource), [playerSource]);
+  const isNativePlayer = playerSource === "cno";
   const supportsProgress = useMemo(
     () => sourceSupportsProgress(playerSource),
     [playerSource],
@@ -738,7 +740,7 @@ export default function TVPage({
 
   // Resolve allmanga episode URL via main-process IPC (GraphQL, no CORS)
   useEffect(() => {
-    if (!playing || !selectedEp) return;
+    if (!playing || !selectedEp || isNativePlayer) return;
     const epNum = selectedEp.episode_number;
     const epKey = `tv_${item.id}_s${selectedSeason}_e${epNum}_${dubMode}`;
 
@@ -1285,7 +1287,7 @@ export default function TVPage({
   // dead (e.g. VidLink returning an empty player). So we also require a real
   // playback proof within a grace window before trusting the embed.
   useEffect(() => {
-    if (!playing || isAsync || embedFallbackActiveRef.current) return;
+    if (!playing || isAsync || isNativePlayer || embedFallbackActiveRef.current) return;
     if (resolvedPlayerUrlRef.current) return;
     const epKey = currentProgressKey;
     if (shouldServerFirstEmbed(playerSource, epKey)) return;
@@ -2450,59 +2452,70 @@ Episode not found on this source
                     </div>
                   </div>
                 )}
-                <iframe
-                  ref={webviewRef}
-                  src={shield.blocked ? "about:blank" : realPlayerSrc}
-                  title={`${title} player`}
-                  allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-                  allowFullScreen
-                  referrerPolicy={
-                  isAsync ? "no-referrer" : sourceReferrerPolicy(playerSource)
-                }
-                  sandbox={isAsync ? undefined : sourceSandbox(playerSource)}
-                  onLoad={() => {
-                    setWebviewLoading(false);
-                    embedLoadFiredRef.current = true;
-                    shield.onPlayerLoad();
-                    // Unfreeze the wall-clock fallback anchor now that the
-                    // player iframe has loaded, so buffer/load time isn't
-                    // counted as watched (keeps the 10s rewind honest).
-                    if (fallbackBaseAtRef.current === 0)
-                      fallbackBaseAtRef.current = Date.now();
-                    if (!isAsync && selectedEp) {
-                      clearEmbedServerFirst(
-                        playerSource,
-                        `tv_${item.id}_s${selectedSeason}_e${selectedEp.episode_number}_${dubMode}`,
-                      );
-                    }
-                  }}
-                  onError={() => {
-                    setWebviewLoading(false);
-                    if (!isAsync && selectedEp) {
-                      markEmbedServerFirst(
-                        playerSource,
-                        `tv_${item.id}_s${selectedSeason}_e${selectedEp.episode_number}_${dubMode}`,
-                      );
-                      embedFallbackActiveRef.current = true;
-                      setEmbedFallbackActive(true);
-                    }
-                  }}
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    width: "100%",
-                    height: "100%",
-                    border: "none",
-                    outline: "none",
-                    boxShadow: "none",
-                    background: "black",
-                    visibility:
-                      webviewLoading || ((isAsync || embedFallbackActive) && !resolvedPlayerUrl)
-                        ? "hidden"
-                        : "visible",
-                  }}
-                  tabIndex={-1}
-                />
+                {playerSource === "cno" ? (
+                  <CnoPlayer
+                    type="tv"
+                    id={item.id}
+                    season={selectedSeason}
+                    episode={selectedEp?.episode_number}
+                    progressKey={`tv_${item.id}_s${selectedSeason}_e${selectedEp?.episode_number}`}
+                    onTimeUpdate={({ currentTime, duration }) => {
+                      if (saveProgress) saveProgress(currentTime, duration);
+                    }}
+                    onLoaded={() => setWebviewLoading(false)}
+                  />
+                ) : (
+                  <iframe
+                    ref={webviewRef}
+                    src={shield.blocked ? "about:blank" : realPlayerSrc}
+                    title={`${title} player`}
+                    allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+                    allowFullScreen
+                    referrerPolicy={
+                    isAsync ? "no-referrer" : sourceReferrerPolicy(playerSource)
+                  }
+                    sandbox={isAsync ? undefined : sourceSandbox(playerSource)}
+                    onLoad={() => {
+                      setWebviewLoading(false);
+                      embedLoadFiredRef.current = true;
+                      shield.onPlayerLoad();
+                      if (fallbackBaseAtRef.current === 0)
+                        fallbackBaseAtRef.current = Date.now();
+                      if (!isAsync && selectedEp) {
+                        clearEmbedServerFirst(
+                          playerSource,
+                          `tv_${item.id}_s${selectedSeason}_e${selectedEp.episode_number}_${dubMode}`,
+                        );
+                      }
+                    }}
+                    onError={() => {
+                      setWebviewLoading(false);
+                      if (!isAsync && selectedEp) {
+                        markEmbedServerFirst(
+                          playerSource,
+                          `tv_${item.id}_s${selectedSeason}_e${selectedEp.episode_number}_${dubMode}`,
+                        );
+                        embedFallbackActiveRef.current = true;
+                        setEmbedFallbackActive(true);
+                      }
+                    }}
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      width: "100%",
+                      height: "100%",
+                      border: "none",
+                      outline: "none",
+                      boxShadow: "none",
+                      background: "black",
+                      visibility:
+                        webviewLoading || ((isAsync || embedFallbackActive) && !resolvedPlayerUrl)
+                          ? "hidden"
+                          : "visible",
+                    }}
+                    tabIndex={-1}
+                  />
+                )}
                 {/* Left-side overlay button group, flex row, no fixed px offsets */}
                 <div className="player-overlay-group">
                   <button

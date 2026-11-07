@@ -142,7 +142,7 @@ const BLOCKED_HOST_RE =
 const PRIVATE_HOST_RE =
   /^(0\.0\.0\.0|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|\[[0-9a-f:]*:1\]|\[::1\])/i;
 const STREAM_UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 function sanitizeFilename(raw, fallback = "download") {
   let name = String(raw ?? "")
@@ -725,6 +725,453 @@ async function handlePlayer(req, res) {
   res.end(playerHtml("u"));
 }
 
+// ── /api/a111/resolve + /api/a111/proxy — open directory at a.111477.xyz ────
+const A111_BASE = "https://a.111477.xyz";
+const A111_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+
+// Cache directory listings for 10 minutes to avoid hammering the server
+const A111_DIR_CACHE = new Map();
+const A111_CACHE_TTL = 10 * 60 * 1000;
+
+// Fetch a directory listing page and return all hrefs
+async function fetchA111Dir(path) {
+  const cached = A111_DIR_CACHE.get(path);
+  if (cached && Date.now() - cached.at < A111_CACHE_TTL) return cached.links;
+
+  const url = `${A111_BASE}${path}`;
+  const res = await fetch(url, {
+    headers: { "User-Agent": A111_UA, "Accept": "text/html" },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`a111 fetch ${res.status} for ${path}`);
+  const html = await res.text();
+  const links = [];
+  const re = /href="([^"?#]+)"/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    let href = m[1];
+    if (href === "/" || href === "../" || href.startsWith("?") || href.startsWith("http")) continue;
+    // Strip the leading section path prefix so we return just the entry name
+    // e.g. /movies/Inception%20(2010)/ → Inception (2010)/
+    href = decodeURIComponent(href);
+    if (href.startsWith(path)) href = href.slice(path.length);
+    if (!href || href === "/" || href === "../") continue;
+    links.push(href);
+  }
+  A111_DIR_CACHE.set(path, { links, at: Date.now() });
+  return links;
+}
+
+// Normalize a name for fuzzy matching: lowercase, strip punctuation/year/country tags
+function normalizeTitle(name) {
+  return name
+    .toLowerCase()
+    .replace(/\s*\(\d{4}\)\s*/g, " ")       // strip (2009)
+    .replace(/\s*\(us\)\s*|\s*\(uk\)\s*|\s*\(au\)\s*/gi, " ")  // strip country tags
+    .replace(/[^a-z0-9\s]/g, " ")            // strip punctuation
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function titleScore(folderName, searchTitle) {
+  const folderNorm = normalizeTitle(folderName.replace(/\/$/, ""));
+  const searchNorm = normalizeTitle(searchTitle);
+  if (folderNorm === searchNorm) return 100;
+  if (folderNorm.startsWith(searchNorm)) return 80;
+  if (folderNorm.includes(searchNorm)) return 60;
+  // Word overlap score
+  const folderWords = new Set(folderNorm.split(" ").filter(Boolean));
+  const searchWords = searchNorm.split(" ").filter(Boolean);
+  if (!searchWords.length) return 0;
+  const matches = searchWords.filter(w => folderWords.has(w)).length;
+  return Math.round((matches / searchWords.length) * 50);
+}
+
+// Find the best matching folder name from a list of directory entries
+function findBestMatch(entries, title, minScore = 40) {
+  let best = null;
+  let bestScore = 0;
+  for (const entry of entries) {
+    const score = titleScore(entry, title);
+    if (score > bestScore) {
+      bestScore = score;
+      best = entry;
+    }
+  }
+  return bestScore >= minScore ? best : null;
+}
+
+// Find the right episode file inside a TV show folder
+// Pattern: looks for SxxExx or just the episode number
+function findEpisodeFile(files, season, episode) {
+  const s = String(season).padStart(2, "0");
+  const e = String(episode).padStart(2, "0");
+  const patterns = [
+    new RegExp(`[Ss]${s}[Ee]${e}`, "i"),
+    new RegExp(`[Ss]${season}[Ee]${episode}\\b`, "i"),
+    new RegExp(`${s}x${e}`, "i"),
+    new RegExp(`season.?${season}.?episode.?${episode}`, "i"),
+  ];
+  // Also check just episode number as fallback
+  const epOnly = new RegExp(`[Ee]${e}[^0-9]|[Ee]pisode.?${e}[^0-9]|[^0-9]${e}\\.`, "i");
+
+  for (const pat of patterns) {
+    const match = files.find(f => pat.test(f));
+    if (match) return match;
+  }
+  const match = files.find(f => epOnly.test(f));
+  return match || null;
+}
+
+function isVideoFile(name) {
+  return /\.(mp4|mkv|avi|mov|m3u8|ts)$/i.test(name);
+}
+
+async function handleA111Resolve(req, res) {
+  if (req.method !== "GET") return sendJson(res, 405, { error: "Method not allowed" });
+  const q = new URL(req.url, "http://local").searchParams;
+  const type = q.get("type") === "tv" ? "tv" : "movie";
+  const title = (q.get("title") || "").trim();
+  const season = parseInt(q.get("season") || "1", 10);
+  const episode = parseInt(q.get("episode") || "1", 10);
+
+  if (!title) return sendJson(res, 400, { error: "title required" });
+
+  try {
+    const rootSection = type === "tv" ? "/tvs/" : "/movies/";
+    // Also check kdrama/asiandrama for TV
+    const sectionsToCheck = type === "tv"
+      ? ["/tvs/", "/kdrama/", "/asiandrama/"]
+      : ["/movies/", "/misc/"];
+
+    let fileUrl = null;
+    let matchedFolder = null;
+
+    for (const section of sectionsToCheck) {
+      let entries;
+      try {
+        entries = await fetchA111Dir(section);
+      } catch (err) {
+        console.warn(`[a111] listing ${section} failed:`, err.message);
+        continue;
+      }
+
+      const folders = entries.filter(e => e.endsWith("/"));
+      const best = findBestMatch(folders, title);
+      if (!best) continue;
+
+      matchedFolder = best;
+      const showPath = `${section}${best}`;
+
+      if (type === "movie") {
+        // For movies, look directly in the folder for video files
+        let movieFiles;
+        try {
+          movieFiles = await fetchA111Dir(showPath);
+        } catch { continue; }
+
+        const videos = movieFiles.filter(isVideoFile);
+        if (videos.length > 0) {
+          // Pick highest quality: prefer 2160p > 1080p > 720p > first
+          const sorted = videos.sort((a, b) => {
+            const qual = (name) => {
+              if (/2160p|4k/i.test(name)) return 4;
+              if (/1080p/i.test(name)) return 3;
+              if (/720p/i.test(name)) return 2;
+              return 1;
+            };
+            return qual(b) - qual(a);
+          });
+          fileUrl = `${A111_BASE}${showPath}${sorted[0]}`;
+          break;
+        }
+        // Maybe there's a subfolder (disc/version)
+        const subfolders = movieFiles.filter(e => e.endsWith("/"));
+        for (const sub of subfolders) {
+          try {
+            const subFiles = await fetchA111Dir(`${showPath}${sub}`);
+            const vids = subFiles.filter(isVideoFile);
+            if (vids.length > 0) {
+              fileUrl = `${A111_BASE}${showPath}${sub}${vids[0]}`;
+              break;
+            }
+          } catch {}
+        }
+        if (fileUrl) break;
+      } else {
+        // TV: look for season folder then episode file
+        let showContents;
+        try {
+          showContents = await fetchA111Dir(showPath);
+        } catch { continue; }
+
+        const seasonFolders = showContents.filter(e => e.endsWith("/"));
+        const seasonFiles = showContents.filter(isVideoFile);
+
+        // Try to find season subfolder
+        const seasonPat = new RegExp(`season.?0*${season}|s0*${season}[^0-9]`, "i");
+        const seasonFolder = seasonFolders.find(f => seasonPat.test(f));
+
+        let episodeFiles = seasonFiles;
+        let episodePath = showPath;
+
+        if (seasonFolder) {
+          episodePath = `${showPath}${seasonFolder}`;
+          try {
+            const sfContents = await fetchA111Dir(episodePath);
+            episodeFiles = sfContents.filter(isVideoFile);
+          } catch {}
+        }
+
+        const epFile = findEpisodeFile(episodeFiles, season, episode);
+        if (epFile) {
+          fileUrl = `${A111_BASE}${episodePath}${epFile}`;
+          break;
+        }
+      }
+    }
+
+    if (!fileUrl) {
+      return sendJson(res, 200, { ok: false, error: `"${title}" not found on 111477` });
+    }
+
+    const origin = requestOrigin(req);
+    const proxyUrl = `${origin}/api/a111/proxy?url=${encodeURIComponent(fileUrl)}`;
+
+    return sendJson(res, 200, {
+      ok: true,
+      fileUrl,
+      proxyUrl,
+      matchedFolder,
+      ext: fileUrl.split(".").pop().toLowerCase(),
+    });
+  } catch (err) {
+    console.error("[api/a111/resolve] failed:", err.message);
+    return sendJson(res, 200, { ok: false, error: err.message });
+  }
+}
+
+// Proxy a file from a.111477.xyz to the browser — handles range requests for seeking
+async function handleA111Proxy(req, res) {
+  const q = new URL(req.url, "http://local").searchParams;
+  const url = q.get("url");
+  if (!url || !url.startsWith(A111_BASE)) {
+    return sendJson(res, 400, { error: "Invalid url" });
+  }
+
+  const headers = {
+    "User-Agent": A111_UA,
+    "Accept": "*/*",
+  };
+  if (req.headers.range) headers["Range"] = req.headers.range;
+
+  try {
+    const upstream = await fetch(url, {
+      headers,
+      signal: AbortSignal.timeout(60000),
+    });
+
+    res.statusCode = upstream.status;
+    for (const [k, v] of upstream.headers.entries()) {
+      if (/^(content-type|content-length|content-range|accept-ranges|last-modified|etag)$/i.test(k)) {
+        res.setHeader(k, v);
+      }
+    }
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cache-Control", "public, max-age=3600");
+
+    // Stream body
+    const reader = upstream.body.getReader();
+    const writeChunk = () => reader.read().then(({ done, value }) => {
+      if (done) { res.end(); return; }
+      if (!res.write(value)) {
+        res.once("drain", writeChunk);
+      } else {
+        writeChunk();
+      }
+    }).catch(() => res.end());
+    writeChunk();
+  } catch (err) {
+    if (!res.headersSent) sendJson(res, 502, { error: err.message });
+    else res.end();
+  }
+}
+
+// ── /api/cno/resolve — scrape cno.to and extract the Lumenbox m3u8 ─────────
+// cno.to embeds its player via a script tag that calls a JSON config endpoint.
+// We fetch the page, pull the config URL, then hit that to get the m3u8.
+const CNO_ORIGIN = "https://cno.to";
+const CNO_REFERER = "https://cno.to/";
+
+async function fetchCnoPage(url) {
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": STREAM_UA,
+      Accept: "text/html,application/xhtml+xml,*/*",
+      Referer: CNO_REFERER,
+      Origin: CNO_ORIGIN,
+    },
+    redirect: "follow",
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`cno.to fetch ${res.status}`);
+  return res.text();
+}
+
+async function fetchCnoJson(url) {
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": STREAM_UA,
+      Accept: "application/json,*/*",
+      Referer: CNO_REFERER,
+      Origin: CNO_ORIGIN,
+    },
+    redirect: "follow",
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`cno.to api ${res.status}`);
+  return res.json();
+}
+
+function extractM3u8FromText(text) {
+  // Look for direct m3u8 URLs in script/json content
+  const m = /["'`](https?:\/\/[^"'`\s]+\.m3u8[^"'`\s]*)/i.exec(text);
+  return m ? m[1] : null;
+}
+
+function extractSrcFromText(text) {
+  // Look for source URL patterns used by cno.to player config
+  const patterns = [
+    /"sources?":\s*\[?\s*\{[^}]*"file":\s*"([^"]+\.m3u8[^"]*)"/i,
+    /"file":\s*"([^"]+\.m3u8[^"]*)"/i,
+    /source:\s*["']([^"']+\.m3u8[^"']*)["']/i,
+    /src:\s*["']([^"']+\.m3u8[^"']*)["']/i,
+    /"url":\s*"([^"]+\.m3u8[^"]*)"/i,
+  ];
+  for (const p of patterns) {
+    const m = p.exec(text);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+// cno.to uses server IDs 1–30 (approx). We try a few until one responds.
+const CNO_SERVERS = [21, 22, 23, 1, 2, 3, 4, 5];
+
+async function fetchCnoApi(serverId, type, id, season, episode) {
+  const path = type === "tv"
+    ? `/api/s/${serverId}/tv/${id}/${season}/${episode}?v=3`
+    : `/api/s/${serverId}/movie/${id}?v=3`;
+  const res = await fetch(`${CNO_ORIGIN}${path}`, {
+    headers: {
+      "User-Agent": STREAM_UA,
+      "Accept": "application/json, */*",
+      "Referer": CNO_REFERER,
+      "Origin": CNO_ORIGIN,
+      "X-Requested-With": "XMLHttpRequest",
+    },
+    redirect: "follow",
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (res.status === 410 || res.status === 404) {
+    const err = new Error(`cno api ${res.status}`);
+    err.notInLibrary = true;
+    throw err;
+  }
+  if (!res.ok) throw new Error(`cno api ${res.status}`);
+  const ct = res.headers.get("content-type") || "";
+  const text = await res.text();
+  if (ct.includes("application/vnd.apple.mpegurl") || ct.includes("application/x-mpegurl") || text.trimStart().startsWith("#EXTM3U")) {
+    console.log(`[cno server ${serverId}] m3u8 body preview:`, text.slice(0, 400));
+    // Check if it's a master playlist referencing Lumenbox quality playlists.
+    const lumen = /(https?:\/\/v\.lumenbox\.top\/[^\s"'#]+\.m3u8[^\s"'#]*)/i.exec(text);
+    if (lumen) return { _directM3u8: lumen[1] };
+    // Generic m3u8 URL in body
+    const generic = /(https?:\/\/[^\s"'#]+\.m3u8[^\s"'#]*)/i.exec(text);
+    if (generic) return { _directM3u8: generic[1] };
+    // No absolute URL found — the body itself is the stream. Stash it and its final URL.
+    return { _m3u8Body: text, _m3u8BaseUrl: res.url };
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Try to extract a URL from whatever text came back
+    const lumen = /(https?:\/\/v\.lumenbox\.top\/v\/[a-f0-9]+\/[^"'\s\n]+\.m3u8[^"'\s\n]*)/i.exec(text);
+    if (lumen) return { _directM3u8: lumen[1] };
+    const generic = /(https?:\/\/[^"'\s\n]+\.m3u8[^"'\s\n]*)/i.exec(text);
+    if (generic) return { _directM3u8: generic[1] };
+    throw new Error(`cno api bad response: ${text.slice(0, 80)}`);
+  }
+}
+
+function extractM3u8FromCnoResponse(data) {
+  if (data?._directM3u8) return data._directM3u8;
+  if (data?._m3u8Body) {
+    // We have a raw m3u8 body. Find any absolute CDN URL inside it.
+    const lumen = /(https?:\/\/v\.lumenbox\.top\/[^\s"'#]+\.m3u8[^\s"'#]*)/i.exec(data._m3u8Body);
+    if (lumen) return lumen[1];
+    const generic = /(https?:\/\/[^\s"'#]+\.m3u8[^\s"'#]*)/i.exec(data._m3u8Body);
+    if (generic) return generic[1];
+    // If segments are relative, we can't reconstruct without the base URL — skip
+    return null;
+  }
+  const str = JSON.stringify(data);
+  const lumen = /(https?:\/\/v\.lumenbox\.top\/v\/[a-f0-9]+\/[^"'\s]+\.m3u8[^"'\s]*)/i.exec(str);
+  if (lumen) return lumen[1];
+  const generic = /(https?:\/\/[^"'\s]+\.m3u8[^"'\s]*)/i.exec(str);
+  if (generic) return generic[1];
+  if (data?.source) return data.source;
+  if (data?.url) return data.url;
+  if (data?.file) return data.file;
+  if (Array.isArray(data?.sources)) {
+    const src = data.sources.find(s => s.file || s.src || s.url);
+    if (src) return src.file || src.src || src.url;
+  }
+  if (Array.isArray(data)) {
+    const src = data.find(s => s.file || s.src || s.url);
+    if (src) return src.file || src.src || src.url;
+  }
+  return null;
+}
+
+async function handleCnoResolve(req, res) {
+  if (req.method !== "GET") return sendJson(res, 405, { error: "Method not allowed" });
+  const q = new URL(req.url, "http://local").searchParams;
+  const type = q.get("type") === "tv" ? "tv" : "movie";
+  const id = q.get("id");
+  const season = q.get("season") || "1";
+  const episode = q.get("episode") || "1";
+
+  if (!id || !/^\d+$/.test(id)) return sendJson(res, 400, { error: "Invalid id" });
+
+  for (const serverId of CNO_SERVERS) {
+    try {
+      const data = await fetchCnoApi(serverId, type, id, season, episode);
+      const m3u8 = extractM3u8FromCnoResponse(data);
+      if (!m3u8) continue;
+      console.log(`[cno] server ${serverId} resolved m3u8 for ${type}/${id}`);
+
+      const origin = requestOrigin(req);
+      const playUrl = `${origin}/api/player/play?u=${encodeURIComponent(m3u8)}&r=${encodeURIComponent(CNO_REFERER)}`;
+
+      return sendJson(res, 200, {
+        ok: true,
+        m3u8,
+        referer: CNO_REFERER,
+        playUrl,
+        server: serverId,
+      });
+    } catch (err) {
+      console.warn(`[api/cno/resolve] server ${serverId} failed:`, err.message);
+      if (err.notInLibrary) {
+        return sendJson(res, 200, { ok: false, error: "Title not available on cno.to" });
+      }
+    }
+  }
+
+  return sendJson(res, 200, { ok: false, error: "No stream found on cno.to" });
+}
+
 /**
  * Route an /api/* request. Returns true when handled (stdlib-compatible
  * (req, res)); false when the URL is outside /api.
@@ -799,6 +1246,21 @@ export async function handleApiRequest(req, res) {
 
     if (url.startsWith("/api/stream")) {
       await handleStream(req, res, url);
+      return true;
+    }
+
+    if (url.startsWith("/api/cno/resolve")) {
+      await handleCnoResolve(req, res);
+      return true;
+    }
+
+    if (url.startsWith("/api/a111/resolve")) {
+      await handleA111Resolve(req, res);
+      return true;
+    }
+
+    if (url.startsWith("/api/a111/proxy")) {
+      await handleA111Proxy(req, res);
       return true;
     }
 
