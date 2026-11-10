@@ -31,6 +31,12 @@ const HLS_CONFIG = {
   manifestLoadingMaxRetry: MAX_RETRIES,
   manifestLoadingRetryDelay: BASE_BACKOFF_MS,
   levelLoadingMaxRetry: MAX_RETRIES,
+  // Start from a ~3 Mbit/s estimate (the 720p rendition) and adapt from
+  // there, instead of waiting on 4K chunks before the first frame.
+  startLevel: -1,
+  abrEwmaDefaultEstimate: 3_000_000,
+  // Don't fetch renditions bigger than the player is drawn on screen.
+  capLevelToPlayerSize: true,
 };
 
 const SUB_PREFS_KEY = "cnoSubPrefs";
@@ -349,12 +355,6 @@ export default function CnoPlayer({
     if (isHLSProvider(provider)) provider.config = HLS_CONFIG;
   };
 
-  const handleManifestParsed = (data) => {
-    // Start on the highest quality, as the old player did.
-    const hls = playerRef.current?.provider?.instance;
-    if (hls && data?.levels?.length > 0) hls.currentLevel = data.levels.length - 1;
-  };
-
   const handleCanPlay = () => {
     if (!seekedRef.current) {
       seekedRef.current = true;
@@ -414,7 +414,6 @@ export default function CnoPlayer({
             autoPlay
             playsInline
             onProviderChange={handleProviderChange}
-            onHlsManifestParsed={handleManifestParsed}
             onHlsError={handleHlsError}
             onCanPlay={handleCanPlay}
             onTimeUpdate={handleTimeUpdate}

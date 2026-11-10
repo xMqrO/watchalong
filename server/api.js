@@ -525,12 +525,13 @@ async function handlePlayerResolve(req, res) {
 async function handlePlayerPlay(req, res) {
   if (req.method !== "GET" && req.method !== "HEAD")
     return sendJson(res, 405, { error: "Method not allowed" });
-  let u, r, m;
+  let u, r, m, keepMaster;
   try {
     const q = new URL(req.url, "http://local").searchParams;
     u = q.get("u");
     r = q.get("r");
     m = q.get("m");
+    keepMaster = q.get("k") === "1";
   } catch {
     return sendJson(res, 400, { error: "Invalid request" });
   }
@@ -560,6 +561,30 @@ async function handlePlayerPlay(req, res) {
       const up = await fetchUpstream(current, upstreamHeaders);
       if (!up.ok) return sendJson(res, 502, { error: `Upstream ${up.status}` });
       const t = await up.text();
+      // k=1: hand the player the whole master playlist (every quality) so it
+      // can start on a light rendition and adapt, instead of locking onto the
+      // heaviest one. Each variant still goes through this proxy.
+      if (keepMaster && i === 0 && /#EXT-X-STREAM-INF/i.test(t)) {
+        const origin = requestOrigin(req);
+        const viaProxy = (uri) =>
+          `${origin}/api/player/play?u=${encodeURIComponent(resolveUrl(current, uri))}&r=${encodeURIComponent(referer)}`;
+        const master = t
+          .split(/\r?\n/)
+          .map((line) => {
+            const s = line.trim();
+            if (/^#EXT-X-(MEDIA|I-FRAME-STREAM-INF)/i.test(s)) {
+              return line.replace(/URI="([^"]+)"/gi, (_mt, ur) => `URI="${viaProxy(ur)}"`);
+            }
+            if (!s || s.startsWith("#")) return line;
+            return viaProxy(s);
+          })
+          .join("\n");
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+        res.setHeader("Cache-Control", "private, max-age=60, stale-while-revalidate=300");
+        res.end(master);
+        return;
+      }
       const variant = pickBestVariant(t);
       if (variant) {
         current = resolveUrl(current, variant.uri);
@@ -1084,9 +1109,12 @@ async function fetchCnoApi(serverId, type, id, season, episode) {
   const text = await res.text();
   if (ct.includes("application/vnd.apple.mpegurl") || ct.includes("application/x-mpegurl") || text.trimStart().startsWith("#EXTM3U")) {
     console.log(`[cno server ${serverId}] m3u8 body preview:`, text.slice(0, 400));
+    // Master playlists are kept whole (see handleCnoResolve) so the player
+    // can choose a quality; _directM3u8 stays as the single-variant fallback.
+    const masterUrl = /#EXT-X-STREAM-INF/i.test(text) ? res.url : null;
     // Check if it's a master playlist referencing Lumenbox quality playlists.
     const lumen = /(https?:\/\/v\.lumenbox\.top\/[^\s"'#]+\.m3u8[^\s"'#]*)/i.exec(text);
-    if (lumen) return { _directM3u8: lumen[1] };
+    if (lumen) return { _directM3u8: lumen[1], _masterUrl: masterUrl };
     // Generic m3u8 URL in body
     const generic = /(https?:\/\/[^\s"'#]+\.m3u8[^\s"'#]*)/i.exec(text);
     if (generic) return { _directM3u8: generic[1] };
@@ -1268,7 +1296,11 @@ async function handleCnoResolve(req, res) {
       console.log(`[cno] server ${serverId} resolved m3u8 for ${type}/${id}`);
 
       const origin = requestOrigin(req);
-      const playUrl = `${origin}/api/player/play?u=${encodeURIComponent(m3u8)}&r=${encodeURIComponent(CNO_REFERER)}`;
+      // Prefer the full master playlist (all qualities, k=1) over the single
+      // 4K rendition, so playback starts fast and adapts to the connection.
+      const playUrl = data._masterUrl
+        ? `${origin}/api/player/play?u=${encodeURIComponent(data._masterUrl)}&r=${encodeURIComponent(CNO_REFERER)}&k=1`
+        : `${origin}/api/player/play?u=${encodeURIComponent(m3u8)}&r=${encodeURIComponent(CNO_REFERER)}`;
 
       return sendJson(res, 200, {
         ok: true,
