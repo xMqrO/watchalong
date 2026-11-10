@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="wa_bg">#13161C</color>
+    <color name="wa_black">#000000</color>
+    <string name="app_name">WatchAlong</string>
+    <string name="downloading">Downloading…</string>
+    <style name="Theme.WatchAlong" parent="Theme.WatchAlong.Base"/>
+    <style name="Theme.WatchAlong.Base" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/wa_bg</item>
+        <item name="android:statusBarColor">@color/wa_bg</item>
+        <item name="android:navigationBarColor">@color/wa_bg</item>
+        <item name="android:colorPrimary">@color/wa_bg</item>
+        <item name="android:colorPrimaryDark">@color/wa_bg</item>
+        <item name="android:colorAccent">@color/wa_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+</resources>

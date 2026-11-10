@@ -1,0 +1,55 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.watchalong.android.app-mergeDebugResources-2:/values/values.xml",
+            "map": [
+                {
+                    "source": "C:\\Users\\Mohamed\\Desktop\\WatchAlong\\android\\app\\src\\main\\res\\values\\colors.xml",
+                    "from": {
+                        "startLines": "2,3",
+                        "startColumns": "4,4",
+                        "startOffsets": "55,95",
+                        "endColumns": "39,42",
+                        "endOffsets": "90,133"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\Mohamed\\Desktop\\WatchAlong\\android\\app\\src\\main\\res\\values\\themes.xml",
+                    "from": {
+                        "startLines": "16,3",
+                        "startColumns": "4,4",
+                        "startOffsets": "792,56",
+                        "endLines": "16,14",
+                        "endColumns": "68,12",
+                        "endOffsets": "856,786"
+                    },
+                    "to": {
+                        "startLines": "6,7",
+                        "startColumns": "4,4",
+                        "startOffsets": "239,307",
+                        "endLines": "6,18",
+                        "endColumns": "67,12",
+                        "endOffsets": "302,1037"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\Mohamed\\Desktop\\WatchAlong\\android\\app\\src\\main\\res\\values\\strings.xml",
+                    "from": {
+                        "startLines": "2,3",
+                        "startColumns": "4,4",
+                        "startOffsets": "55,103",
+                        "endColumns": "47,52",
+                        "endOffsets": "98,151"
+                    },
+                    "to": {
+                        "startLines": "4,5",
+                        "startColumns": "4,4",
+                        "startOffsets": "138,186",
+                        "endColumns": "47,52",
+                        "endOffsets": "181,234"
+                    }
+                }
+            ]
+        }
+    ]
+}

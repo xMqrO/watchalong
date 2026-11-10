@@ -1,0 +1,13 @@
+com.watchalong.android:xml/network_security_config = 0x7f080000
+com.watchalong.android:string/app_name = 0x7f060000
+com.watchalong.android:mipmap/ic_launcher_round = 0x7f050001
+com.watchalong.android:layout/activity_main = 0x7f040000
+com.watchalong.android:style/Theme.WatchAlong = 0x7f070000
+com.watchalong.android:string/downloading = 0x7f060001
+com.watchalong.android:style/Theme.WatchAlong.Base = 0x7f070001
+com.watchalong.android:id/webview = 0x7f030001
+com.watchalong.android:mipmap/ic_launcher = 0x7f050000
+com.watchalong.android:drawable/ic_launcher_foreground = 0x7f020000
+com.watchalong.android:id/root = 0x7f030000
+com.watchalong.android:color/wa_black = 0x7f010001
+com.watchalong.android:color/wa_bg = 0x7f010000
