@@ -1,0 +1,16 @@
+{
+  "projectId": "prj_O56JEowupzrjDulMkEkumWtq7TFy",
+  "orgId": "team_I7Ll19JVsf12r8pA1tb1FlAO",
+  "projectName": "watchalong",
+  "settings": {
+    "createdAt": 1789212067023,
+    "framework": "vite",
+    "devCommand": null,
+    "installCommand": null,
+    "buildCommand": "npm run build && node scripts/prepare-vercel.mjs",
+    "outputDirectory": "dist",
+    "rootDirectory": null,
+    "directoryListing": false,
+    "nodeVersion": "24.x"
+  }
+}
